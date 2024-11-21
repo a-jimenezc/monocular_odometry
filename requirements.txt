@@ -1,0 +1,2 @@
+# Python version: 3.10.15
+opencv-python==4.10.0.84
