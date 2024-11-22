@@ -98,7 +98,7 @@ def bundle_adjustment(K, camera_poses, points_3d, keyframes):
         reprojection_error,
         initial_params,
         args=(num_cameras, num_points, K, observations),
-        method="lm",
+        method="trf",
         verbose=2
     )
 
