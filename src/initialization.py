@@ -38,9 +38,14 @@ def initial_keyframes(video_handler, threshold = 3):
             break
     return keyframes
 
-def keyframe_matcher(keyframe1, keyframe2):
+def keyframe_matcher(keyframe1, keyframe2, distance_threshold=50.0):
+    if keyframe1["descriptors"] is None or keyframe2["descriptors"] is None:
+        raise TypeError("Descriptors must not be None.")
     bf = cv2.BFMatcher(cv2.NORM_L2, crossCheck=True)
-    matches = bf.match(keyframe1["descriptors"], keyframe2["descriptors"])
+    matches_not_filtered = bf.match(keyframe1["descriptors"], keyframe2["descriptors"])
+
+    # Filter matches by distance threshold
+    matches = [m for m in matches_not_filtered if m.distance < distance_threshold] # Check threshold
 
     # Extract matched points and descriptors
     matched_points1 = np.array([keyframe1["points"][m.queryIdx] for m in matches])
