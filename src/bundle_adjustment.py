@@ -84,7 +84,8 @@ def bundle_adjustment(K, camera_poses, points_3d, keyframes):
     initial_camera_params = []
     for pose in camera_poses:
         rvec, _ = cv2.Rodrigues(pose["R"])
-        initial_camera_params.append(np.hstack((rvec.ravel(), pose["t"])))
+        #initial_camera_params.append(np.hstack((rvec.ravel(), pose["t"])))
+        initial_camera_params.append(np.hstack((rvec.ravel(), pose["t"].ravel())))
 
     # Flatten all parameters into a single array for optimization
     initial_params = np.hstack((np.concatenate(initial_camera_params), points_3d.ravel()))
