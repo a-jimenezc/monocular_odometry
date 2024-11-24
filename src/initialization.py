@@ -141,7 +141,7 @@ def triangulate_points(P1, P2, pts1, pts2):
     points_3d = points_homogeneous[:3, valid_mask] / points_homogeneous[3, valid_mask]
     return points_3d.T
     
-def initialize(video_path, K):
+def initialize(video_path, K, max_nfev=None):
 
     video_handler = VideoDataHandler(video_path, grayscale=True)
     keyframes = initial_keyframes(video_handler, threshold = 3)
@@ -165,9 +165,15 @@ def initialize(video_path, K):
     R1_refined, _ = cv2.Rodrigues(rvec)
     t1_refined = tvec
 
-    # Return unoptimized poses and points (placeholder for bundle adjustment)
     aligned_keyframes = [aligned_keyframe0, aligned_keyframe1, aligned_keyframe2]
     poses = [{"R": np.eye(3), "t": np.zeros((3,))}, {"R": R1_refined, "t": t1_refined}, {"R": R2, "t": t2}]
-    optimized_poses, optimized_points = bundle_adjustment(K, poses, points_3d, aligned_keyframes)
+    print(poses)
+    optimized_poses, optimized_points = bundle_adjustment(K, poses, points_3d, aligned_keyframes, max_nfev=max_nfev)
+    descriptors_3d = aligned_keyframe2["descriptors"] 
 
-    return optimized_poses, optimized_points
+    optimized_points_3d = {
+        "points_3d" : optimized_points,
+        "descriptors_3d" : descriptors_3d
+    }
+
+    return optimized_poses, aligned_keyframes, optimized_points_3d, video_handler

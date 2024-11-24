@@ -65,7 +65,7 @@ def reprojection_error(params, num_cameras, num_points, K, observations):
 
     return np.array(residuals)
 
-def bundle_adjustment(K, camera_poses, points_3d, keyframes):
+def bundle_adjustment(K, camera_poses, points_3d, keyframes, max_nfev=None):
     """
     Perform bundle adjustment to optimize camera poses and 3D points.
 
@@ -100,7 +100,8 @@ def bundle_adjustment(K, camera_poses, points_3d, keyframes):
         initial_params,
         args=(num_cameras, num_points, K, observations),
         method="trf",
-        verbose=2
+        verbose=2,
+        max_nfev=max_nfev
     )
 
     # Extract optimized camera poses
