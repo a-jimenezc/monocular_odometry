@@ -27,7 +27,7 @@ def project(points_3d, pose, K):
 
     points_homogeneous = np.hstack((points_3d, np.ones((points_3d.shape[0], 1))))
     projections = P @ points_homogeneous.T
-    projections /= projections[2, :]  # Normalize by z-coordinate
+    projections /= projections[2, :]  # Normalize by z- homogeneous coordinate
     return projections[:2, :].T
 
 def reprojection_error(params, num_cameras, num_points, K, observations):
@@ -55,17 +55,17 @@ def reprojection_error(params, num_cameras, num_points, K, observations):
         tvec = camera_params[i, 3:]
         R, _ = cv2.Rodrigues(rvec)
 
-        pose = {"R": R, "t": tvec}
+        camera_pose = {"R": R, "t": tvec}
 
         # Project points onto the camera
-        projected_points = project(points_3d, pose, K)
+        projected_points = project(points_3d, camera_pose, K)
 
         # Compute residuals (difference between observed and projected points)
         residuals.extend((projected_points - keyframe["points"]).ravel())
 
     return np.array(residuals)
 
-def bundle_adjustment(K, camera_poses, points_3d, keyframes, max_nfev=None):
+def bundle_adjustment(K, camera_poses, keyframes, points_3d, max_nfev=None):
     """
     Perform bundle adjustment to optimize camera poses and 3D points.
 
@@ -84,7 +84,6 @@ def bundle_adjustment(K, camera_poses, points_3d, keyframes, max_nfev=None):
     initial_camera_params = []
     for pose in camera_poses:
         rvec, _ = cv2.Rodrigues(pose["R"])
-        #initial_camera_params.append(np.hstack((rvec.ravel(), pose["t"])))
         initial_camera_params.append(np.hstack((rvec.ravel(), pose["t"].ravel())))
 
     # Flatten all parameters into a single array for optimization

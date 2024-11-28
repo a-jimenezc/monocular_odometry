@@ -153,8 +153,10 @@ def initialize(video_path, K, max_nfev=None):
     E2, R2, t2, inlier_keyframe0_E2, inlier_keyframe2_E2 = compute_essential_matrix(
         keyframes[0], keyframes[2], K)
 
+    # Taking into account only common points in the three frames
     aligned_keyframe0, aligned_keyframe1, aligned_keyframe2 = align_keyframes(
         inlier_keyframe0_E2, inlier_keyframe1_E1, inlier_keyframe2_E2)
+    
     # Triangulate points
     P0 = K @ np.hstack((np.eye(3), np.zeros((3, 1))))
     P2 = K @ np.hstack((R2, t2))
@@ -168,11 +170,11 @@ def initialize(video_path, K, max_nfev=None):
     aligned_keyframes = [aligned_keyframe0, aligned_keyframe1, aligned_keyframe2]
     poses = [{"R": np.eye(3), "t": np.zeros((3,))}, {"R": R1_refined, "t": t1_refined}, {"R": R2, "t": t2}]
     print(poses)
-    optimized_poses, optimized_points = bundle_adjustment(K, poses, points_3d, aligned_keyframes, max_nfev=max_nfev)
+    optimized_poses, optimized_points_3d = bundle_adjustment(K, poses, aligned_keyframes, points_3d,  max_nfev=max_nfev)
     descriptors_3d = aligned_keyframe2["descriptors"] 
 
     optimized_points_3d = {
-        "points_3d" : optimized_points,
+        "points_3d" : optimized_points_3d,
         "descriptors_3d" : descriptors_3d
     }
 
