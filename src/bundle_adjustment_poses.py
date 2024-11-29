@@ -102,13 +102,13 @@ def bundle_adjustment(K, window_keyframe_poses, window_keyframes, points_descrip
     initial_params = np.hstack((np.concatenate(optimized_camera_params), points_3d.ravel()))
 
     matches_list = precompute_matches(descriptors_3d, window_keyframes)
-    
+
     result = least_squares(
         reprojection_error,
         initial_params,
         args=(K, window_keyframes, fixed_poses, m, descriptors_3d, matches_list),
         method="trf",
-        max_nfev=1,
+        max_nfev=max_nfev,
         verbose=2
     )
 

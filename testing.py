@@ -63,7 +63,7 @@ print(points_2d_view3.tolist())
 # Mock keyframes with points and descriptors
 keyframes = [
     {"points": np.array(points_2d_view1.tolist()),
-        "descriptors": np.array([[0.2, 0.3], [0.1, 0.2], [0.3, 0.4], [0.6, 0.5]]).astype(np.float32)},
+        "descriptors": np.array([[0.1, 0.2], [0.2, 0.3], [0.3, 0.4], [0.6, 0.5]]).astype(np.float32)},
     {"points": np.array(points_2d_view2.tolist()),
         "descriptors": np.array([[0.1, 0.2], [0.2, 0.3], [0.3, 0.4], [0.4, 0.5]]).astype(np.float32)},
     {"points": np.array(points_2d_view3.tolist()),
@@ -102,6 +102,66 @@ print(points2)
 print("Aligned Points in Keyframe 3:")
 print(points3)
 print('len points', len(points1))
-points_homogeneous = cv2.triangulatePoints(P1, P2, points1.T, points2.T)
-print('triangulated points', len(points_homogeneous.T))
+
+#points_homogeneous = cv2.triangulatePoints(P1, P2, points1.T, points2.T)
+# Triangulate between View 1 & View 2
+points_homogeneous_12 = cv2.triangulatePoints(P1, P2, points1.T, points2.T)
+points_3d_12 = points_homogeneous_12[:3] / points_homogeneous_12[3]
+
+# Triangulate between View 1 & View 3
+points_homogeneous_13 = cv2.triangulatePoints(P1, P3, points1.T, points3.T)
+points_3d_13 = points_homogeneous_13[:3] / points_homogeneous_13[3]
+
+# Combine the results (example: using average of two triangulations)
+points_3d_combined = (points_3d_12 + points_3d_13) / 2
+
+print("Triangulated 3D Points (Combined):")
+print(points_3d_combined.T)
+
+
+#print('triangulated points', len(points_homogeneous.T))
+#print((points_homogeneous[:3] / points_homogeneous[3]).T)
+
+import cv2
+
+def trim_video(input_video, output_video, start_time, end_time):
+    """
+    Trim a video using OpenCV.
+
+    Args:
+        input_video (str): Path to the input video file.
+        output_video (str): Path to the output trimmed video file.
+        start_time (float): Start time of the trim in seconds.
+        end_time (float): End time of the trim in seconds.
+    """
+
+    cap = cv2.VideoCapture(input_video)
+    fps = cap.get(cv2.CAP_PROP_FPS)
+    width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+
+    fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+    out = cv2.VideoWriter(output_video, fourcc, fps, (width, height))
+
+    start_frame = int(start_time * fps)
+    end_frame = int(end_time * fps)
+
+    frame_count = 0
+    while cap.isOpened():
+        ret, frame = cap.read()
+        if not ret:
+            break
+
+        if start_frame <= frame_count <= end_frame:
+            out.write(frame)
+
+        frame_count += 1
+
+    cap.release()
+    out.release()
+
+if __name__ == "__main__":
+    trim_video("test_data/vid6.avi", "test_data/vid7.avi", 5, 10)
+
+
 

@@ -68,34 +68,31 @@ def triangulate_new_points(K, keyframe_poses, keyframes, points_descriptors_3d, 
     print('points for trinagulation', len(points1), len(points2),len(points3))
 
     # To do: implement 3 view triangulation
-    points_homogeneous = cv2.triangulatePoints(P1, P2, points1.T, points2.T)
+    points_homogeneous = cv2.triangulatePoints(P2, P3, points1.T, points2.T)
     print('triangulated points', len(points_homogeneous.T))
     points_3d = (points_homogeneous[:3] / points_homogeneous[3]).T  # Convert to non-homogeneous
 
     # Reprojection error check
     valid_indices = []
     for i, point in enumerate(points_3d):
-        reproj1 = P1 @ np.append(point, 1)
         reproj2 = P2 @ np.append(point, 1)
         reproj3 = P3 @ np.append(point, 1)
 
-        reproj1 = reproj1[:2] / reproj1[2]
         reproj2 = reproj2[:2] / reproj2[2]
         reproj3 = reproj3[:2] / reproj3[2]
 
-        error1 = np.linalg.norm(reproj1 - points1[i])
         error2 = np.linalg.norm(reproj2 - points2[i])
         error3 = np.linalg.norm(reproj3 - points3[i])
 
-        if error1 < reprojection_threshold and error2 < reprojection_threshold and error3 < reprojection_threshold:
+        if error2 < reprojection_threshold and error3 < reprojection_threshold:
             valid_indices.append(i)
     print('valid_indices', len(valid_indices))
     # Filter points and descriptors
-    new_points_3d = points_3d#[valid_indices]
+    new_points_3d = points_3d[valid_indices]
     new_descriptors_3d_list = []
     for i, (_, _, train_idx_23) in enumerate(valid_matches):
-        #if i in valid_indices: # It will keep the order as in points_3d[valid_indices]
-        new_descriptors_3d_list.append(keyframe3["descriptors"][train_idx_23])
+        if i in valid_indices: # It will keep the order as in points_3d[valid_indices]
+            new_descriptors_3d_list.append(keyframe3["descriptors"][train_idx_23])
 
     new_descriptors_3d = np.array(new_descriptors_3d_list)
     print('new_descriptors_3d_list', len(new_descriptors_3d_list))
@@ -115,7 +112,7 @@ def triangulate_new_points(K, keyframe_poses, keyframes, points_descriptors_3d, 
     print('new 3d points', len(new_points_3d))
     return new_points_3d, new_descriptors_3d
 
-def points_updater(keyframe_poses, keyframes, points_descriptors_3d, K, L=5, m=3):
+def points_updater(keyframe_poses, keyframes, points_descriptors_3d, K, L=5, m=3, max_nfev=1):
     # extracting L previous keyframes and poses,
     window_keyframe_poses = keyframe_poses[-L:].copy()
     window_keyframes = keyframes[-L:].copy()
@@ -124,7 +121,7 @@ def points_updater(keyframe_poses, keyframes, points_descriptors_3d, K, L=5, m=3
                         window_keyframes,
                         points_descriptors_3d,
                         m,
-                        max_nfev=None)
+                        max_nfev=max_nfev)
     # New points_3d
     new_points_3d, new_descriptors_3d = triangulate_new_points(K, keyframe_poses, keyframes, points_descriptors_3d)
     return new_points_3d, new_descriptors_3d, optimized_window_keyframe_poses
@@ -134,7 +131,8 @@ def estimate_poses(K,
                    keyframes,
                    points_descriptors_3d, 
                    video_handler,
-                   min_points_threshold=1000):
+                   min_points_threshold=10,
+                   max_nfev=1):
 
     """
     Estimates poses for subsequent frames in a video sequence.
@@ -156,17 +154,20 @@ def estimate_poses(K,
 
     points_3d = points_descriptors_3d["points_3d"]
     descriptors_3d = points_descriptors_3d["descriptors_3d"]
-
+    i = 0
     for frame in video_handler:
         # Detect feature points in the current frame
         keypoints, descriptors = feature_detector.detectAndCompute(frame, None)
-        if descriptors is None or (descriptors is not None and len(descriptors) < 500):
-            print(len(descriptors))
+        print('detected points', len(descriptors))
+        if descriptors is None or (descriptors is not None and len(descriptors) < 100):
             print("Not enough descriptors in the current frame.")
             continue
 
         # Match descriptors with the 3D point descriptors
         matches = bf.match(descriptors_3d, descriptors)
+        matches = [m for m in matches if m.distance < 50]
+        print('first 3d_points', len(points_3d))
+        print('first matches', len(matches))
 
         # Filter matches to retain the association between 3D points and 2D points
         matched_points_3d = np.array([points_3d[m.queryIdx] for m in matches])
@@ -194,6 +195,8 @@ def estimate_poses(K,
             print("Too few 3D points matched. Calculating new ones.")
             print('matched_points_3d', len(matched_points_3d))
             print('points_3d', len(points_3d))
+            i = i+1
+            if i > 1: break
 
             # Adding unfiltered new keyframe
             points = np.array([kp.pt for kp in keypoints])  # Extract points from keypoints
@@ -210,8 +213,9 @@ def estimate_poses(K,
                                                                points_descriptors_3d,
                                                                K,
                                                                L=L, 
-                                                               m=m)
-            print(new_points_3d.size)    
+                                                               m=m,
+                                                               max_nfev=max_nfev)
+            print('new 3d points size', len(new_points_3d))    
             if new_points_3d.size > 0:
                 points_3d = np.vstack((points_3d, new_points_3d))
 
@@ -220,13 +224,13 @@ def estimate_poses(K,
 
             keyframe_poses[-m:] = optimized_window_keyframe_poses
             frame_pose = optimized_window_keyframe_poses[-1]
-            
+            #output_poses.append(frame_pose)
 
             continue
 
         # Append the estimated pose to the list of poses
         output_poses.append(frame_pose)
-        print(len(output_poses))
+        print('number of poses', len(output_poses))
 
     return output_poses
 

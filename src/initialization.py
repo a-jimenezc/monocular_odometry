@@ -23,7 +23,7 @@ def initial_keyframes(video_handler, threshold = 3):
         
         # Store keyframe data
         points = np.array([kp.pt for kp in keypoints])
-        if points.shape[0] < 1000:
+        if points.shape[0] < 100:
             continue
         keyframes.append({
             "points": points,
@@ -42,7 +42,6 @@ def keyframe_matcher(keyframe1, keyframe2, distance_threshold=50.0):
         raise TypeError("Descriptors must not be None.")
     bf = cv2.BFMatcher(cv2.NORM_L2, crossCheck=True)
     matches_not_filtered = bf.match(keyframe1["descriptors"], keyframe2["descriptors"])
-
     # Filter matches by distance threshold
     matches = [m for m in matches_not_filtered if m.distance < distance_threshold] # Check threshold
 
@@ -69,6 +68,7 @@ def compute_essential_matrix(keyframe1, keyframe2, K, ransac_threshold=3.0):
 
     # Compute the fundamental and essential matrix
     matched_keyframe1, matched_keyframe2 = keyframe_matcher(keyframe1, keyframe2)
+
 
     if len(matched_keyframe1["points"]) < 5 or len(matched_keyframe2["points"]) < 5:
         raise ValueError("Insufficient points for essential matrix computation (minimum 5 points required).")
@@ -146,6 +146,7 @@ def initialize(video_path, K, max_nfev=None):
     video_handler = VideoDataHandler(video_path, grayscale=True)
     keyframes = initial_keyframes(video_handler, threshold = 3)
 
+
     # Compute essential matrices
     K = K.astype(np.float64)
     E1, R1, t1, inlier_keyframe0_E1, inlier_keyframe1_E1 = compute_essential_matrix(
@@ -169,7 +170,6 @@ def initialize(video_path, K, max_nfev=None):
 
     aligned_keyframes = [aligned_keyframe0, aligned_keyframe1, aligned_keyframe2]
     poses = [{"R": np.eye(3), "t": np.zeros((3,))}, {"R": R1_refined, "t": t1_refined}, {"R": R2, "t": t2}]
-    #print(poses)
     optimized_poses, optimized_points_3d = bundle_adjustment(K, poses, aligned_keyframes, points_3d,  max_nfev=max_nfev)
     descriptors_3d = aligned_keyframe2["descriptors"] 
 
