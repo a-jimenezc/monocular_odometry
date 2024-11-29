@@ -2,34 +2,71 @@ from scipy.optimize import least_squares
 import numpy as np
 import cv2
 
-# Define the reprojection error function
-def reprojection_error(params, num_cameras, num_points, K, observations):
+def reprojection_error(params, K, window_keyframes, fixed_poses, m, descriptors_3d, matches):
     """
-    Compute the reprojection error for bundle adjustment.
+    Compute the reprojection error for bundle adjustment, optimizing only the most recent keyframes.
     """
-    camera_params = params[:num_cameras * 6].reshape((num_cameras, 6))
-    points_3d = params[num_cameras * 6:].reshape((num_points, 3))
+    # Extract optimized camera parameters and 3D points
+    optimized_camera_params = params[:m * 6].reshape((-1, 6))
+    points_3d = params[m * 6:].reshape((-1, 3))
     residuals = []
 
-    for i, keyframe in enumerate(observations):
-        # Extract camera parameters
-        rvec = camera_params[i, :3]
-        tvec = camera_params[i, 3:]
-        R, _ = cv2.Rodrigues(rvec)
+    if len(points_3d) != len(descriptors_3d):
+        raise ValueError("Mismatch points_3d descriptors_3d")
+
+    for i, keyframe in enumerate(window_keyframes):
+        if i < len(fixed_poses):
+            # Use fixed poses for older keyframes
+            R = fixed_poses[i]["R"]
+            t = fixed_poses[i]["t"]
+        else:
+            # Use optimized poses for recent keyframes
+            rvec = optimized_camera_params[i - len(fixed_poses), :3]
+            tvec = optimized_camera_params[i - len(fixed_poses), 3:]
+            R, _ = cv2.Rodrigues(rvec)
+            t = tvec
 
         # Project points into the current keyframe
-        P = K @ np.hstack((R, tvec.reshape(-1, 1)))
+        R_inv = R.T
+        t_inv = -R_inv @ t.reshape(-1, 1)
+        P = K @ np.hstack((R_inv, t_inv))
         points_homogeneous = np.hstack((points_3d, np.ones((points_3d.shape[0], 1))))
         projections = P @ points_homogeneous.T
         projections /= projections[2, :]  # Normalize by z-coordinate
         projected_points = projections[:2, :].T
 
-        # Compute residuals between observed and projected points
-        residuals.extend((projected_points - keyframe["points"]).ravel())
+        if len(matches[i]) == 0:
+            print('No bf match')
+            continue  # Skip keyframe if no matches
+
+        matched_projected_points = np.array([projected_points[m.queryIdx] for m in matches[i]])
+        matched_keyframe_points = np.array([keyframe["points"][m.trainIdx] for m in matches[i]])
+
+
+        # Compute residuals for the matched points
+        residuals.extend((matched_projected_points - matched_keyframe_points).ravel())
 
     return np.array(residuals)
 
-def bundle_adjustment(K, window_keyframe_poses, window_keyframes, points_descriptors_3d, m, max_nfev=None):
+def precompute_matches(descriptors_3d, window_keyframes):
+    """
+    Precompute descriptor matches between 3D descriptors and keyframe descriptors.
+
+    Args:
+    - descriptors_3d: 3D descriptors (NxD array).
+    - window_keyframes: List of keyframes, each with "descriptors" and "points".
+
+    Returns:
+    - matches_list: List of matches for each keyframe.
+    """
+    bf = cv2.BFMatcher(cv2.NORM_L2, crossCheck=True)
+    matches_list = []
+    for keyframe in window_keyframes:
+        matches = bf.match(descriptors_3d, keyframe["descriptors"])
+        matches_list.append(matches)
+    return matches_list
+
+def bundle_adjustment(K, window_keyframe_poses, window_keyframes, points_descriptors_3d, m, max_nfev=1):
     """
     Perform bundle adjustment on a sliding window of keyframes, optimizing only the most recent `m` keyframes.
 
@@ -49,42 +86,36 @@ def bundle_adjustment(K, window_keyframe_poses, window_keyframes, points_descrip
     points_3d = points_descriptors_3d["points_3d"]
     descriptors_3d = points_descriptors_3d["descriptors_3d"]
 
-    # Prepare parameters for optimization
-    num_keyframes = len(window_keyframe_poses)
-    fixed_keyframes = num_keyframes - m  # Number of fixed keyframes
-
-    # Flatten camera poses for the optimizer
-    camera_params = []
-    for i, pose in enumerate(window_keyframe_poses):
-        rvec, _ = cv2.Rodrigues(pose["R"])
-        camera_params.append(np.hstack((rvec.ravel(), pose["t"].ravel())))
-    camera_params = np.array(camera_params)
-
-    # Flatten all parameters for optimization
-    initial_params = np.hstack((camera_params.ravel(), points_3d.ravel()))
-
-    # Observations: Collect 2D-3D correspondences for each keyframe
-    observations = []
-    for keyframe in window_keyframes:
-        observations.append({"points": keyframe["points"]})
-
     num_cameras = len(window_keyframe_poses)
-    num_points = points_3d.shape[0]
+    num_optimized_cameras = len(window_keyframe_poses[-m:])
+    num_fixed_poses = len(window_keyframe_poses[:-m])
 
-    # Perform optimization
+    # Separating keyframes
+    fixed_poses = window_keyframe_poses[:-m]
+
+    optimized_camera_params = []
+    for pose in window_keyframe_poses[-m:]:
+        rvec, _ = cv2.Rodrigues(pose["R"])
+        tvec = pose["t"].ravel()
+        optimized_camera_params.append(np.hstack((rvec.ravel(), tvec)))
+
+    initial_params = np.hstack((np.concatenate(optimized_camera_params), points_3d.ravel()))
+
+    matches_list = precompute_matches(descriptors_3d, window_keyframes)
+    
     result = least_squares(
         reprojection_error,
         initial_params,
-        args=(num_cameras, num_points, K, observations),
-        method="lm",
-        max_nfev=max_nfev,
+        args=(K, window_keyframes, fixed_poses, m, descriptors_3d, matches_list),
+        method="trf",
+        max_nfev=1,
         verbose=2
     )
 
     # Extract optimized parameters
     optimized_params = result.x
-    optimized_camera_params = optimized_params[:num_cameras * 6].reshape((num_cameras, 6))
-    optimized_points_3d = optimized_params[num_cameras * 6:].reshape((num_points, 3))
+    optimized_camera_params = optimized_params[:num_optimized_cameras * 6].reshape((-1, 6))
+    optimized_points_3d = optimized_params[num_optimized_cameras * 6:].reshape((-1, 3))
 
     # Convert optimized camera parameters back to pose format
     optimized_window_keyframe_poses = []

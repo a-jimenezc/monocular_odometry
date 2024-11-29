@@ -169,7 +169,7 @@ def initialize(video_path, K, max_nfev=None):
 
     aligned_keyframes = [aligned_keyframe0, aligned_keyframe1, aligned_keyframe2]
     poses = [{"R": np.eye(3), "t": np.zeros((3,))}, {"R": R1_refined, "t": t1_refined}, {"R": R2, "t": t2}]
-    print(poses)
+    #print(poses)
     optimized_poses, optimized_points_3d = bundle_adjustment(K, poses, aligned_keyframes, points_3d,  max_nfev=max_nfev)
     descriptors_3d = aligned_keyframe2["descriptors"] 
 

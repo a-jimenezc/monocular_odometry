@@ -14,7 +14,14 @@ K = np.array([
 init_keyframe_poses, keyframes, optimized_points_3d, video_handler = initialize(video_path, K, max_nfev=1)
 
 poses = estimate_poses(K, init_keyframe_poses, keyframes, optimized_points_3d, video_handler, min_points_threshold=1000)
-print(poses)
+
+import json
+
+# Save to a JSON file
+with open("data.json", "w") as file:
+    json.dump(poses, file)
+
+#print(poses)
 
 #print(optimized_points)
 #plot_point_cloud(optimized_points, title="Optimized 3D Point Cloud")

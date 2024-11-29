@@ -1,8 +1,9 @@
 import cv2
+import copy
 import numpy as np
-from src.bundle_adjustment import bundle_adjustment_poses
+from src.bundle_adjustment_poses import bundle_adjustment
 
-def triangulate_new_points(keyframe_poses, keyframes, points_descriptors_3d, reprojection_threshold=1.0):
+def triangulate_new_points(K, keyframe_poses, keyframes, points_descriptors_3d, reprojection_threshold=10.0):
     """
     Triangulate new 3D points using the last three keyframes and their poses.
 
@@ -29,7 +30,8 @@ def triangulate_new_points(keyframe_poses, keyframes, points_descriptors_3d, rep
         R, t = pose["R"], pose["t"].reshape(-1, 1)
         R_inv = R.T
         t_inv = -R_inv @ t
-        return np.hstack((R_inv, t_inv))
+        P = K @ np.hstack((R_inv, t_inv))
+        return P
     
     P1 = compute_projection_matrix(pose1)
     P2 = compute_projection_matrix(pose2)
@@ -63,9 +65,11 @@ def triangulate_new_points(keyframe_poses, keyframes, points_descriptors_3d, rep
     points1 = np.array([keyframe1["points"][query_idx_12] for query_idx_12, _, _ in valid_matches])
     points2 = np.array([keyframe2["points"][train_idx1] for _, train_idx1, _ in valid_matches])
     points3 = np.array([keyframe3["points"][train_idx_23] for _, _, train_idx_23 in valid_matches])
+    print('points for trinagulation', len(points1), len(points2),len(points3))
 
     # To do: implement 3 view triangulation
     points_homogeneous = cv2.triangulatePoints(P1, P2, points1.T, points2.T)
+    print('triangulated points', len(points_homogeneous.T))
     points_3d = (points_homogeneous[:3] / points_homogeneous[3]).T  # Convert to non-homogeneous
 
     # Reprojection error check
@@ -85,21 +89,21 @@ def triangulate_new_points(keyframe_poses, keyframes, points_descriptors_3d, rep
 
         if error1 < reprojection_threshold and error2 < reprojection_threshold and error3 < reprojection_threshold:
             valid_indices.append(i)
-
+    print('valid_indices', len(valid_indices))
     # Filter points and descriptors
-    new_points_3d = points_3d[valid_indices]
+    new_points_3d = points_3d#[valid_indices]
     new_descriptors_3d_list = []
     for i, (_, _, train_idx_23) in enumerate(valid_matches):
-        if i in valid_indices: # It will keep the order as in points_3d[valid_indices]
-            new_descriptors_3d_list.append(keyframe3["descriptors"][train_idx_23])
+        #if i in valid_indices: # It will keep the order as in points_3d[valid_indices]
+        new_descriptors_3d_list.append(keyframe3["descriptors"][train_idx_23])
 
     new_descriptors_3d = np.array(new_descriptors_3d_list)
+    print('new_descriptors_3d_list', len(new_descriptors_3d_list))
 
     # Remove existing 3D points using descriptors
     if points_descriptors_3d is not None:
-        bf = cv2.BFMatcher(cv2.NORM_L2, crossCheck=False)
-        matches = bf.match(new_descriptors_3d, points_descriptors_3d["descriptors"])
-
+        matches = bf.match(new_descriptors_3d, points_descriptors_3d["descriptors_3d"])
+        print('matches previous descriptor', len(matches))
         matched_indices = [m.queryIdx for m in matches]  # Indices of new points that match existing points
         filtered_indices = []
         for i in range(len(new_points_3d)):
@@ -108,24 +112,22 @@ def triangulate_new_points(keyframe_poses, keyframes, points_descriptors_3d, rep
 
         new_points_3d = new_points_3d[filtered_indices]
         new_descriptors_3d = new_descriptors_3d[filtered_indices]
-
+    print('new 3d points', len(new_points_3d))
     return new_points_3d, new_descriptors_3d
 
 def points_updater(keyframe_poses, keyframes, points_descriptors_3d, K, L=5, m=3):
     # extracting L previous keyframes and poses,
     window_keyframe_poses = keyframe_poses[-L:].copy()
     window_keyframes = keyframes[-L:].copy()
-    optimized_window_keyframe_poses, optimized_points_descriptors_3d = bundle_adjustment_poses(K, 
+    optimized_window_keyframe_poses, optimized_points_descriptors_3d = bundle_adjustment(K, 
                         window_keyframe_poses,
                         window_keyframes,
                         points_descriptors_3d,
                         m,
                         max_nfev=None)
-    # modify original list
-    keyframe_poses[-L:] = optimized_window_keyframe_poses
     # New points_3d
-    new_points_3d, new_descriptors_3d = triangulate_new_points(keyframe_poses, keyframes)
-    return new_points_3d, new_descriptors_3d
+    new_points_3d, new_descriptors_3d = triangulate_new_points(K, keyframe_poses, keyframes, points_descriptors_3d)
+    return new_points_3d, new_descriptors_3d, optimized_window_keyframe_poses
 
 def estimate_poses(K, 
                    init_keyframe_poses,
@@ -148,8 +150,9 @@ def estimate_poses(K,
     """
     feature_detector = cv2.SIFT_create()
     bf = cv2.BFMatcher(cv2.NORM_L2, crossCheck=True)
-    keyframe_poses = init_keyframe_poses.copy()
-    output_poses = init_keyframe_poses.copy()
+
+    keyframe_poses = copy.deepcopy(init_keyframe_poses)
+    output_poses = copy.deepcopy(init_keyframe_poses)
 
     points_3d = points_descriptors_3d["points_3d"]
     descriptors_3d = points_descriptors_3d["descriptors_3d"]
@@ -157,7 +160,7 @@ def estimate_poses(K,
     for frame in video_handler:
         # Detect feature points in the current frame
         keypoints, descriptors = feature_detector.detectAndCompute(frame, None)
-        if descriptors is None or len(descriptors) < 500: # see threshold
+        if descriptors is None or (descriptors is not None and len(descriptors) < 500):
             print(len(descriptors))
             print("Not enough descriptors in the current frame.")
             continue
@@ -187,27 +190,43 @@ def estimate_poses(K,
         t = tvec
         frame_pose = {"R": R, "t": t}
 
-        if len(matched_points_3d) < min_points_threshold: # still keeps continuity
-            print("Too few 3D points matched. Stopping pose estimation.")
+        if len(matched_points_3d) < min_points_threshold: # ensure 3d points in range of view
+            print("Too few 3D points matched. Calculating new ones.")
+            print('matched_points_3d', len(matched_points_3d))
+            print('points_3d', len(points_3d))
 
             # Adding unfiltered new keyframe
-            new_keyframe = {"points": keypoints.pt, "descriptors": descriptors}
+            points = np.array([kp.pt for kp in keypoints])  # Extract points from keypoints
+            new_keyframe = {"points": points, "descriptors": descriptors}
             keyframe_poses.append(frame_pose)
             keyframes.append(new_keyframe)
+            L, m = 5, 3
+
+            if len(keyframes) < L:
+                continue
             
-            new_points_3d, new_descriptors_3d = points_updater(keyframe_poses,
+            new_points_3d, new_descriptors_3d, optimized_window_keyframe_poses = points_updater(keyframe_poses,
                                                                keyframes, 
                                                                points_descriptors_3d,
                                                                K,
-                                                               L=5, 
-                                                               m=3)
-            points_3d.append(new_points_3d)
-            descriptors_3d.append(new_descriptors_3d)
+                                                               L=L, 
+                                                               m=m)
+            print(new_points_3d.size)    
+            if new_points_3d.size > 0:
+                points_3d = np.vstack((points_3d, new_points_3d))
 
-            break
+            if new_descriptors_3d.size > 0:
+                descriptors_3d = np.vstack((descriptors_3d, new_descriptors_3d))
+
+            keyframe_poses[-m:] = optimized_window_keyframe_poses
+            frame_pose = optimized_window_keyframe_poses[-1]
+            
+
+            continue
 
         # Append the estimated pose to the list of poses
         output_poses.append(frame_pose)
+        print(len(output_poses))
 
     return output_poses
 
