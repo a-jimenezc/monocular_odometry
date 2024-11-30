@@ -123,45 +123,150 @@ print(points_3d_combined.T)
 #print((points_homogeneous[:3] / points_homogeneous[3]).T)
 
 import cv2
+import numpy as np
 
-def trim_video(input_video, output_video, start_time, end_time):
-    """
-    Trim a video using OpenCV.
+def main():
+    # Intrinsic matrix K
+    K = np.array([
+        [1000, 0, 320],
+        [0, 1000, 240],
+        [0, 0, 1]
+    ], dtype=np.float64)
 
-    Args:
-        input_video (str): Path to the input video file.
-        output_video (str): Path to the output trimmed video file.
-        start_time (float): Start time of the trim in seconds.
-        end_time (float): End time of the trim in seconds.
-    """
+    # Define 3D points in the world
+    points_3d = np.array([
+        [1, 1, 5],
+        [2, 0, 5],
+        [0, -1, 5],
+        [-1, -1, 5],
+        [-1, -2, 10],
+        [-2, -3, 9],
+        [-2, -5, 1],
+        [3, -1, 9],
+    ], dtype=np.float32)
 
-    cap = cv2.VideoCapture(input_video)
-    fps = cap.get(cv2.CAP_PROP_FPS)
-    width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    # Define two camera poses
+    R1 = np.eye(3)  # First camera: Identity rotation
+    t1 = np.zeros((3, 1))  # First camera: No translation
 
-    fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-    out = cv2.VideoWriter(output_video, fourcc, fps, (width, height))
+    R2, _ = cv2.Rodrigues(np.array([0.1, 0.2, 0.3]))  # Slight rotation for the second camera
+    t2 = np.array([[1.0], [0.5], [0.2]])  # Slight translation for the second camera
 
-    start_frame = int(start_time * fps)
-    end_frame = int(end_time * fps)
+    # Project the 3D points into two views
 
-    frame_count = 0
-    while cap.isOpened():
-        ret, frame = cap.read()
-        if not ret:
-            break
+    
+    #testing bundle adjustment projection
+    from src.bundle_adjustment import project as project_points
 
-        if start_frame <= frame_count <= end_frame:
-            out.write(frame)
+    points_view1, P1 = project_points(points_3d, {'R' : R1, 't' : t1}, K)
+    points_view2, P2 = project_points(points_3d, {'R' : R2, 't' : t2}, K)
+    #points_homogeneous = cv2.triangulatePoints(P1, P2, points_view1.T, points_view2.T)
+    #points_3d = points_homogeneous[:3] / points_homogeneous[3]
+    #print('points_3d', points_3d.T)
+    print('points_view1', points_view1)
+    from src.initialization import triangulate_points
+    points_3d = triangulate_points(P1, P2, points_view1,  points_view2)# already handling traspose
+    print('points_3d', points_3d)
+    # Estimate the fundamental matrix
+    ransac_threshold = 1.0
+    F, inliers = cv2.findFundamentalMat(points_view1, points_view2, cv2.FM_RANSAC, ransac_threshold)
 
-        frame_count += 1
+    if F is None or inliers is None:
+        print("Fundamental matrix estimation failed.")
+        return
 
-    cap.release()
-    out.release()
+    # Compute Essential Matrix
+    E = K.T @ F @ K
+
+    # Recover pose from the Essential Matrix
+    retval, R_recovered, t_recovered, mask = cv2.recoverPose(E, points_view1, points_view2, K)
+    R_inv = R_recovered.T
+    t_inv = -R_inv @ t_recovered
+    # Print results
+    print("Original Rotation R2:\n", R2)
+    print("Recovered Rotation R:\n", R_inv)
+    print("Original Translation t2:\n", t2.ravel())
+    print("Recovered Translation t:\n", t_inv.ravel())
+    print("Number of inliers:", inliers)
 
 if __name__ == "__main__":
-    trim_video("test_data/vid6.avi", "test_data/vid7.avi", 5, 10)
+    main()
+
+
+
+import numpy as np
+import cv2
+
+# Example of hardcoded keyframes
+keyframe0 = {
+    "points": np.array([
+        [100, 200],  # Point 0
+        [150, 250],  # Point 1
+        [200, 300],  # Point 2
+        [250, 350],  # Point 3
+    ]),
+    "descriptors": np.array([
+        [0.1, 0.58, 0.3, 0.4],  # Descriptor 0
+        [0.2, 0.3, 0.4, 0.5],  # Descriptor 1
+        [0.3, 0.4, 0.5, 0.6],  # Descriptor 2
+        [0.4, 0.5, 0.6, 0.7],  # Descriptor 3
+    ], dtype=np.float32),
+}
+
+keyframe1 = {
+    "points": np.array([
+        [150, 250],  # Point 1 (matches keyframe0 Point 1)
+        [200, 300],  # Point 2 (matches keyframe0 Point 2)
+        [300, 400],  # Point 4 (new point)
+        [400, 500],  # Point 5 (new point)
+    ]),
+    "descriptors": np.array([
+        [0.1, 0.2, 0.3, 0.4],  # Descriptor 0
+        [0.2, 0.3, 0.4, 0.5],  # Descriptor 1
+        [0.4, 0.5, 0.6, 0.7],  # Descriptor 2
+        [0.4, 0.5, 0.6, 0.7],  # Descriptor 3
+    ], dtype=np.float32),
+}
+
+keyframe2 = {
+    "points": np.array([
+        [200, 300],  # Point 2 (matches keyframe1 Point 2)
+        [300, 400],  # Point 4 (matches keyframe1 Point 4)
+        [500, 600],  # Point 6 (new point)
+        [600, 700],  # Point 7 (new point)
+    ]),
+    "descriptors": np.array([
+        [0.1, 0.2, 0.3, 0.4],  # Descriptor 0
+        [0.2, 0.3, 0.4, 0.5],  # Descriptor 1
+        [0.3, 0.4, 0.5, 0.6],  # Descriptor 2
+        [0.4, 0.5, 0.6, 0.7],  # Descriptor 3
+    ], dtype=np.float32),
+}
+
+def test_align_keyframes():
+    from src.initialization import align_keyframes, keyframe_matcher  # Replace `your_module` with actual module name
+
+    try:
+        matched_keyframe0_a, matched_keyframe1, matched_keyframe2 = align_keyframes(keyframe0, keyframe1, keyframe2)
+
+        print("Aligned Keyframe 0 (with Keyframe 1):")
+        print("Points:", matched_keyframe0_a["points"])
+        print("Descriptors:", matched_keyframe0_a["descriptors"])
+
+        print("\nAligned Keyframe 1:")
+        print("Points:", matched_keyframe1["points"])
+        print("Descriptors:", matched_keyframe1["descriptors"])
+
+        print("\nAligned Keyframe 2:")
+        print("Points:", matched_keyframe2["points"])
+        print("Descriptors:", matched_keyframe2["descriptors"])
+
+    except ValueError as e:
+        print("Error:", e)
+
+
+if __name__ == "__main__":
+    test_align_keyframes()
 
 
 

@@ -51,11 +51,6 @@ def reprojection_error(params, K, window_keyframes, fixed_poses, m, descriptors_
 def precompute_matches(descriptors_3d, window_keyframes):
     """
     Precompute descriptor matches between 3D descriptors and keyframe descriptors.
-
-    Args:
-    - descriptors_3d: 3D descriptors (NxD array).
-    - window_keyframes: List of keyframes, each with "descriptors" and "points".
-
     Returns:
     - matches_list: List of matches for each keyframe.
     """
@@ -69,15 +64,6 @@ def precompute_matches(descriptors_3d, window_keyframes):
 def bundle_adjustment(K, window_keyframe_poses, window_keyframes, points_descriptors_3d, m, max_nfev=1):
     """
     Perform bundle adjustment on a sliding window of keyframes, optimizing only the most recent `m` keyframes.
-
-    Args:
-    - K: Camera intrinsic matrix.
-    - window_keyframe_poses: List of poses within the sliding window, each as {"R": rotation matrix, "t": translation vector}.
-    - window_keyframes: List of keyframes in the sliding window, each containing 2D points and descriptors.
-    - points_descriptors_3d: Dictionary with "points_3d" (Nx3) and "descriptors_3d".
-    - m: Number of most recent keyframes to optimize.
-    - max_nfev: Maximum number of function evaluations for the optimizer.
-
     Returns:
     - optimized_window_keyframe_poses: Updated poses for the sliding window.
     - optimized_points_descriptors_3d: Updated 3D points and descriptors.

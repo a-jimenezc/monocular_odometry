@@ -4,28 +4,32 @@ from scipy.optimize import least_squares
 from src.video_data_handler import VideoDataHandler
 from src.bundle_adjustment import bundle_adjustment
 
-def initial_keyframes(video_handler, threshold = 3):
-
-    # compute initial 3 keyframes
+def initial_keyframes(video_handler, threshold_diff_init_frames = 80, min_init_features = 100):
+    '''
+    Compute initial keyframes.
+    Returns:
+        - init_keyframes: List of initial three keyframes
+    '''
     feature_detector = cv2.SIFT_create()
+    bf = cv2.BFMatcher(cv2.NORM_L2, crossCheck=True)
     previous_descriptors = None
-    keyframes = []
+
+    init_keyframes = []
     for frame in video_handler:
         keypoints, descriptors = feature_detector.detectAndCompute(frame, None)
         
-        # Compute similarity with previous frame's descriptors
-        if previous_descriptors is not None:
-            bf = cv2.BFMatcher(cv2.NORM_L2, crossCheck=True)
+        if previous_descriptors is not None: # Compute similarity with previous frame
             matches = bf.match(previous_descriptors, descriptors)
             match_distances = [m.distance for m in matches]
-            if np.mean(match_distances) < threshold:
+            if np.mean(match_distances) < threshold_diff_init_frames:
                 continue
         
-        # Store keyframe data
         points = np.array([kp.pt for kp in keypoints])
-        if points.shape[0] < 100:
+
+        if points.shape[0] < min_init_features: # Ensure minimun number of points
             continue
-        keyframes.append({
+
+        init_keyframes.append({
             "points": points,
             "descriptors": descriptors
         })
@@ -33,17 +37,25 @@ def initial_keyframes(video_handler, threshold = 3):
         previous_descriptors = descriptors
         
         # Limit to 3 keyframes
-        if len(keyframes) >= 3:
-            break
-    return keyframes
+        if len(init_keyframes) >= 3: break
+    return init_keyframes
 
-def keyframe_matcher(keyframe1, keyframe2, distance_threshold=50.0):
+def keyframe_matcher(keyframe1, keyframe2, distance_threshold = 40):
+    '''
+    Matches feature points and descriptors between two keyframes using BFMatcher.
+    '''
+
+    bf = cv2.BFMatcher(cv2.NORM_L2, crossCheck=True)
+
     if keyframe1["descriptors"] is None or keyframe2["descriptors"] is None:
         raise TypeError("Descriptors must not be None.")
-    bf = cv2.BFMatcher(cv2.NORM_L2, crossCheck=True)
+    
     matches_not_filtered = bf.match(keyframe1["descriptors"], keyframe2["descriptors"])
-    # Filter matches by distance threshold
-    matches = [m for m in matches_not_filtered if m.distance < distance_threshold] # Check threshold
+    
+    matches = []
+    for m in matches_not_filtered:
+        if m.distance < distance_threshold: # Check threshold
+            matches.append(m) 
 
     # Extract matched points and descriptors
     matched_points1 = np.array([keyframe1["points"][m.queryIdx] for m in matches])
@@ -58,28 +70,25 @@ def keyframe_matcher(keyframe1, keyframe2, distance_threshold=50.0):
 
     return matched_keyframe1, matched_keyframe2
 
-def compute_essential_matrix(keyframe1, keyframe2, K, ransac_threshold=3.0):
+def compute_essential_matrix(keyframe1, keyframe2, K, ransac_threshold=0.1):
     """
-    Compute the essential matrix between two keyframes using their feature points and descriptors.
-    Returns:
-    - E: Essential matrix (3x3).
-    - inliers: Boolean mask of inliers used for the computation.
+    Compute the essential matrix between two keyframes.
     """
 
-    # Compute the fundamental and essential matrix
     matched_keyframe1, matched_keyframe2 = keyframe_matcher(keyframe1, keyframe2)
-
 
     if len(matched_keyframe1["points"]) < 5 or len(matched_keyframe2["points"]) < 5:
         raise ValueError("Insufficient points for essential matrix computation (minimum 5 points required).")
-    if K.shape != (3, 3) or np.linalg.det(K) == 0:
-        raise ValueError("Invalid intrinsic matrix provided.")
-    
+
     F, inliers = cv2.findFundamentalMat(matched_keyframe1["points"],
                                         matched_keyframe2["points"], 
                                         cv2.FM_RANSAC, 
                                         ransac_threshold)
-
+    
+    if F is None or inliers is None:
+        print("Fundamental matrix estimation failed.")
+        return
+    
     E = K.T @ F @ K
 
     # Compute pose
@@ -87,7 +96,7 @@ def compute_essential_matrix(keyframe1, keyframe2, K, ransac_threshold=3.0):
                                          matched_keyframe1["points"], 
                                          matched_keyframe2["points"], 
                                          K)
-
+    
     inliers = inliers.ravel() > 0
     inlier_keyframe1 = {
         "points": matched_keyframe1["points"][inliers],
@@ -99,8 +108,11 @@ def compute_essential_matrix(keyframe1, keyframe2, K, ransac_threshold=3.0):
         "descriptors": matched_keyframe2["descriptors"][inliers],
     }
 
+    # Recovered pose is 2_T_1, but 1_T_2 is needed (2 with respect to 1):
+    R_inv = R.T
+    t_inv = -R_inv @ t
 
-    return E, R, t, inlier_keyframe1, inlier_keyframe2
+    return E, R_inv, t_inv, inlier_keyframe1, inlier_keyframe2
 
 def align_keyframes(keyframe0, keyframe1, keyframe2):
     """
@@ -129,26 +141,29 @@ def align_keyframes(keyframe0, keyframe1, keyframe2):
     return matched_keyframe0_a, matched_keyframe1, rechecked_keyframe2
 
 def triangulate_points(P1, P2, pts1, pts2):
+    '''
+    Triangulate from two views
+    '''
+
     assert pts1.shape == pts2.shape, \
     "Points in the two views must have the same shape for triangulation."
 
     points_homogeneous = cv2.triangulatePoints(P1, P2, pts1.T, pts2.T)
     points_3d = points_homogeneous[:3] / points_homogeneous[3]
+    points_3d = points_3d.T
     
     valid_mask = np.abs(points_homogeneous[3]) > 1e-6
     if not np.all(valid_mask):
         raise ValueError("Invalid triangulated points detected. Some points have near-zero or zero homogeneous coordinates.")
-    points_3d = points_homogeneous[:3, valid_mask] / points_homogeneous[3, valid_mask]
-    return points_3d.T
+    #points_3d = points_homogeneous[:3, valid_mask] / points_homogeneous[3, valid_mask]
+    return points_3d
     
 def initialize(video_path, K, max_nfev=None):
 
     video_handler = VideoDataHandler(video_path, grayscale=True)
-    keyframes = initial_keyframes(video_handler, threshold = 3)
-
+    keyframes = initial_keyframes(video_handler)
 
     # Compute essential matrices
-    K = K.astype(np.float64)
     E1, R1, t1, inlier_keyframe0_E1, inlier_keyframe1_E1 = compute_essential_matrix(
         keyframes[0], keyframes[1], K)
     E2, R2, t2, inlier_keyframe0_E2, inlier_keyframe2_E2 = compute_essential_matrix(
@@ -158,15 +173,26 @@ def initialize(video_path, K, max_nfev=None):
     aligned_keyframe0, aligned_keyframe1, aligned_keyframe2 = align_keyframes(
         inlier_keyframe0_E2, inlier_keyframe1_E1, inlier_keyframe2_E2)
     
-    # Triangulate points
-    P0 = K @ np.hstack((np.eye(3), np.zeros((3, 1))))
-    P2 = K @ np.hstack((R2, t2))
-    points_3d = triangulate_points(P0, P2, aligned_keyframe0["points"], aligned_keyframe2["points"])
+    pose0 = {"R" : np.eye(3), "t" : np.zeros((3, 1))} #K @ np.hstack((np.eye(3), np.zeros((3, 1))))
+    pose2 = {"R" : R2, "t" : t2} #K @ np.hstack((R2, t2))
+
+    def compute_projection_matrix(pose, K):
+        R, t = pose["R"], pose["t"].reshape(-1, 1)
+        R_inv = R.T
+        t_inv = -R_inv @ t
+        P = K @ np.hstack((R_inv, t_inv))
+        return P
+    
+    proyection_0 = compute_projection_matrix(pose0, K)
+    proyection_2 = compute_projection_matrix(pose2, K)
+    points_3d = triangulate_points(proyection_0, proyection_2, aligned_keyframe0["points"], aligned_keyframe2["points"])
 
     # Pose estimation for K1
     retval, rvec, tvec, inliers = cv2.solvePnPRansac(points_3d, aligned_keyframe1["points"], K, None)
-    R1_refined, _ = cv2.Rodrigues(rvec)
-    t1_refined = tvec
+    R1_inv, _ = cv2.Rodrigues(rvec) # PnP returns the inverse of the camera pose. c_T_w
+    t1_inv = tvec
+    R1_refined = R1_inv.T # Camera pose with respect to origin. w_T_c
+    t1_refined = -R1_refined @ t1_inv
 
     aligned_keyframes = [aligned_keyframe0, aligned_keyframe1, aligned_keyframe2]
     poses = [{"R": np.eye(3), "t": np.zeros((3,))}, {"R": R1_refined, "t": t1_refined}, {"R": R2, "t": t2}]
@@ -178,4 +204,4 @@ def initialize(video_path, K, max_nfev=None):
         "descriptors_3d" : descriptors_3d
     }
 
-    return optimized_poses, aligned_keyframes, optimized_points_3d, video_handler
+    return poses, optimized_poses, aligned_keyframes, optimized_points_3d, video_handler

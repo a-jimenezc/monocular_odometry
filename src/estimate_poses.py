@@ -68,7 +68,7 @@ def triangulate_new_points(K, keyframe_poses, keyframes, points_descriptors_3d, 
     print('points for trinagulation', len(points1), len(points2),len(points3))
 
     # To do: implement 3 view triangulation
-    points_homogeneous = cv2.triangulatePoints(P2, P3, points1.T, points2.T)
+    points_homogeneous = cv2.triangulatePoints(P2, P3, points2.T, points3.T)
     print('triangulated points', len(points_homogeneous.T))
     points_3d = (points_homogeneous[:3] / points_homogeneous[3]).T  # Convert to non-homogeneous
 
@@ -136,13 +136,6 @@ def estimate_poses(K,
 
     """
     Estimates poses for subsequent frames in a video sequence.
-
-    Args:
-    - optimized_poses: List of existing poses, each as {"R": rotation matrix, "t": translation vector}.
-    - optimized_points_3d: Dictionary with keys "points_3d" and "descriptors_3d".
-    - video_handler: An instance of VideoDataHandler to provide video frames.
-    - min_points_threshold: Minimum number of 3D points required to continue.
-
     Returns:
     - poses: Updated list of poses with the new estimated poses.
     """
@@ -156,18 +149,24 @@ def estimate_poses(K,
     descriptors_3d = points_descriptors_3d["descriptors_3d"]
     i = 0
     for frame in video_handler:
+
         # Detect feature points in the current frame
         keypoints, descriptors = feature_detector.detectAndCompute(frame, None)
-        print('detected points', len(descriptors))
+        print('detected points', len(keypoints))
         if descriptors is None or (descriptors is not None and len(descriptors) < 100):
             print("Not enough descriptors in the current frame.")
             continue
 
         # Match descriptors with the 3D point descriptors
         matches = bf.match(descriptors_3d, descriptors)
+        print(len(matches))
         matches = [m for m in matches if m.distance < 50]
+
         print('first 3d_points', len(points_3d))
-        print('first matches', len(matches))
+        print('current frame matches with 3d points: ', len(matches))
+
+        if len(matches) < 5:
+            continue
 
         # Filter matches to retain the association between 3D points and 2D points
         matched_points_3d = np.array([points_3d[m.queryIdx] for m in matches])
@@ -186,17 +185,17 @@ def estimate_poses(K,
             print("PnP failed for the current frame.")
             continue
 
-        # Redefine pose
+        # PnP returns the inverse of the camera pose. c_T_w
         R, _ = cv2.Rodrigues(rvec)
         t = tvec
-        frame_pose = {"R": R, "t": t}
+        frame_pose = {"R": R.T, "t": -R.T @ t}
 
         if len(matched_points_3d) < min_points_threshold: # ensure 3d points in range of view
             print("Too few 3D points matched. Calculating new ones.")
             print('matched_points_3d', len(matched_points_3d))
             print('points_3d', len(points_3d))
             i = i+1
-            if i > 1: break
+            if i > 0: break
 
             # Adding unfiltered new keyframe
             points = np.array([kp.pt for kp in keypoints])  # Extract points from keypoints
