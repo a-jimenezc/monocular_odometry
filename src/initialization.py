@@ -4,7 +4,7 @@ from scipy.optimize import least_squares
 from src.video_data_handler import VideoDataHandler
 from src.bundle_adjustment import bundle_adjustment
 
-def initial_keyframes(video_handler, threshold_diff_init_frames = 80, min_init_features = 100):
+def initial_keyframes(init_frame, video_handler, threshold_diff_init_frames = 80, min_init_features = 100):
     '''
     Compute initial keyframes.
     Returns:
@@ -15,6 +15,7 @@ def initial_keyframes(video_handler, threshold_diff_init_frames = 80, min_init_f
     previous_descriptors = None
 
     init_keyframes = []
+    init_keyframes.append(init_frame)
     for frame in video_handler:
         keypoints, descriptors = feature_detector.detectAndCompute(frame, None)
         
@@ -40,7 +41,7 @@ def initial_keyframes(video_handler, threshold_diff_init_frames = 80, min_init_f
         if len(init_keyframes) >= 3: break
     return init_keyframes
 
-def keyframe_matcher(keyframe1, keyframe2, distance_threshold = 40):
+def keyframe_matcher(keyframe1, keyframe2, distance_threshold = 80):
     '''
     Matches feature points and descriptors between two keyframes using BFMatcher.
     '''
@@ -70,7 +71,7 @@ def keyframe_matcher(keyframe1, keyframe2, distance_threshold = 40):
 
     return matched_keyframe1, matched_keyframe2
 
-def compute_essential_matrix(keyframe1, keyframe2, K, ransac_threshold=0.1):
+def compute_essential_matrix(keyframe1, keyframe2, K, ransac_threshold=0.5):
     """
     Compute the essential matrix between two keyframes.
     """
@@ -158,30 +159,87 @@ def triangulate_points(P1, P2, pts1, pts2):
     #points_3d = points_homogeneous[:3, valid_mask] / points_homogeneous[3, valid_mask]
     return points_3d
     
-def initialize(video_path, K, max_nfev=None):
+def compute_projection_matrix(pose, K):
+    R, t = pose["R"], pose["t"].reshape(-1, 1)
+    R_inv = R.T
+    t_inv = -R_inv @ t
+    P = K @ np.hstack((R_inv, t_inv))
+    return P
 
-    video_handler = VideoDataHandler(video_path, grayscale=True)
-    keyframes = initial_keyframes(video_handler)
-
-    # Compute essential matrices
-    E1, R1, t1, inlier_keyframe0_E1, inlier_keyframe1_E1 = compute_essential_matrix(
-        keyframes[0], keyframes[1], K)
-    E2, R2, t2, inlier_keyframe0_E2, inlier_keyframe2_E2 = compute_essential_matrix(
-        keyframes[0], keyframes[2], K)
-
-    # Taking into account only common points in the three frames
-    aligned_keyframe0, aligned_keyframe1, aligned_keyframe2 = align_keyframes(
-        inlier_keyframe0_E2, inlier_keyframe1_E1, inlier_keyframe2_E2)
+def compose_poses(pose1, pose2):
+    """
+    Composes two poses.
+    """
+    R1, t1 = pose1["R"], pose1["t"].flatten()
+    R2, t2 = pose2["R"], pose2["t"].flatten()
     
-    pose0 = {"R" : np.eye(3), "t" : np.zeros((3, 1))} #K @ np.hstack((np.eye(3), np.zeros((3, 1))))
-    pose2 = {"R" : R2, "t" : t2} #K @ np.hstack((R2, t2))
+    R_result = R1 @ R2
+    t_result = t1.T + R1 @ t2.T
+    
+    return {"R": R_result, "t": t_result}
 
-    def compute_projection_matrix(pose, K):
-        R, t = pose["R"], pose["t"].reshape(-1, 1)
-        R_inv = R.T
-        t_inv = -R_inv @ t
-        P = K @ np.hstack((R_inv, t_inv))
-        return P
+def compose_pose_list(new_pose, poses):
+    """
+    Composes each pose in the list with an additional pose.
+    """
+    transformed_poses = []
+    for pose in poses:
+        transformed_pose = compose_poses(new_pose, pose)
+        transformed_poses.append(transformed_pose)
+    return transformed_poses
+
+def transform_points(pose, points):
+    """
+    Transforms an array of 3D points using a given pose with homogeneous transformation.
+    """
+    R = pose["R"]
+    t = pose["t"].flatten()
+    print(pose)
+    
+    T = np.eye(4)
+    T[:3, :3] = R
+    T[:3, 3] = t
+
+    points_h = np.hstack((points, np.ones((points.shape[0], 1))))
+    transformed_points_h = T @ points_h.T
+    points_3d = transformed_points_h[:3] / transformed_points_h[3]
+    points_3d = points_3d.T
+
+    return points_3d
+    
+def initialize(init_frame, init_pose, video_handler, K, max_nfev=None):
+    
+    threshold_pnp = 7 # check this number
+    max_attempts = 20
+    attempt = 0
+    while attempt < max_attempts:
+        print(f"Attempt {attempt + 1} of {max_attempts}")
+        attempt += 1
+        keyframes = initial_keyframes(init_frame, video_handler)
+        try:
+            # Compute essential matrices
+            E1, R1, t1, inlier_keyframe0_E1, inlier_keyframe1_E1 = compute_essential_matrix(
+                keyframes[0], keyframes[1], K)
+            E2, R2, t2, inlier_keyframe0_E2, inlier_keyframe2_E2 = compute_essential_matrix(
+                keyframes[0], keyframes[2], K)
+
+            # Taking into account only common points in the three frames
+            aligned_keyframe0, aligned_keyframe1, aligned_keyframe2 = align_keyframes(
+            inlier_keyframe0_E2, inlier_keyframe1_E1, inlier_keyframe2_E2)
+        except:
+            continue
+        
+        if len(aligned_keyframe0["points"]) >= threshold_pnp:
+            print("Sufficient aligned points found!")
+            break
+        else:
+            print("Insufficient aligned points, retrying...")
+
+    if len(aligned_keyframe0["points"]) < threshold_pnp:
+        raise ValueError("Failed to compute with sufficient aligned points after retries.")
+    
+    pose0 = {"R" : np.eye(3), "t" : np.zeros((3, 1))}#np.hstack((np.eye(3), np.zeros((3, 1))))
+    pose2 = {"R" : R2, "t" : t2} #K @ np.hstack((R2, t2))
     
     proyection_0 = compute_projection_matrix(pose0, K)
     proyection_2 = compute_projection_matrix(pose2, K)
@@ -195,13 +253,19 @@ def initialize(video_path, K, max_nfev=None):
     t1_refined = -R1_refined @ t1_inv
 
     aligned_keyframes = [aligned_keyframe0, aligned_keyframe1, aligned_keyframe2]
-    poses = [{"R": np.eye(3), "t": np.zeros((3,))}, {"R": R1_refined, "t": t1_refined}, {"R": R2, "t": t2}]
+    poses = [pose0, {"R": R1_refined, "t": t1_refined}, pose2]
     optimized_poses, optimized_points_3d = bundle_adjustment(K, poses, aligned_keyframes, points_3d,  max_nfev=max_nfev)
     descriptors_3d = aligned_keyframe2["descriptors"] 
 
-    optimized_points_3d = {
-        "points_3d" : optimized_points_3d,
+    # Transforming poses and points into world frame coordinates
+    optimized_poses_w = compose_pose_list(init_pose, optimized_poses)
+    optimized_points_3d_w = transform_points(init_pose, optimized_points_3d)
+    #print('optimized poses', optimized_poses)
+    #print('optimized_poses_w', optimized_poses_w)
+
+    optimized_points_descriptors_3d_w = {
+        "points_3d" : optimized_points_3d_w,
         "descriptors_3d" : descriptors_3d
     }
 
-    return poses, optimized_poses, aligned_keyframes, optimized_points_3d, video_handler
+    return optimized_poses_w, aligned_keyframes, optimized_points_descriptors_3d_w, video_handler

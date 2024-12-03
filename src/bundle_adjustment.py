@@ -38,9 +38,6 @@ def reprojection_error(params, num_cameras, K, keyframes, init_pose):
     camera_params = params[:num_cameras * 6].reshape((-1, 6))
     points_3d = params[num_cameras * 6:].reshape((-1, 3))
     residuals = []
-    print('num_cameras:',len(camera_params))
-    print('len(points_3d)', len(points_3d))
-    print('len keyframes', len(keyframes))
 
     for i, keyframe in enumerate(keyframes):
         # Extract rotation and translation for the camera
