@@ -1,6 +1,8 @@
 import cv2
 import numpy as np
+from scipy.optimize import least_squares
 from scipy.spatial.transform import Rotation as R
+
 
 class CamPose:
 
@@ -76,6 +78,18 @@ class CamPose:
         scale = gt_norm / estimated_norm
 
         return CamPose(self.R, self.t * scale)
+
+    def flatten(self):#
+        rvec, _ = cv2.Rodrigues(self.R)
+        pose_array = np.hstack((rvec.ravel(), self.t.ravel()))
+        return pose_array
+    
+    @staticmethod   
+    def unflatten(pose_array):#
+        rvec = pose_array[:3]
+        tvec = pose_array[3:]
+        R, _ = cv2.Rodrigues(rvec)
+        return CamPose(R, tvec.reshape(3,))
 
 class PointDescriptors():
 
@@ -207,6 +221,72 @@ def pnp(corresponding_3d, corresponding_2d, K): #
 
     return pose
 
+def reprojection_error(params, num_cameras, frames, init_pose, points_3d, distance_matcher, K):
+    """
+    Compute reprojection errors.
+    Returns:
+    - Residuals: Flattened reprojection error vector.
+    """
+    # Extract camera poses and 3D points
+    camera_params = params[:num_cameras * 6].reshape((-1, 6))
+    points_3d_points = params[num_cameras * 6:].reshape((-1, 3))
+    points_3d = PointDescriptors(points_3d_points, points_3d.descriptors)
+    residuals = []
+
+    for i, frame in enumerate(frames):
+        # Extract rotation and translation for the camera
+        if i == 0:
+            camera_pose = init_pose
+        else:
+            rvec = camera_params[i-1, :3]
+            tvec = camera_params[i-1, 3:]
+            R, _ = cv2.Rodrigues(rvec)
+            camera_pose = CamPose(R, tvec)
+
+        # Project points onto the camera
+        matched_points_3d, matched_points_frame = points_3d.points_matcher(frame, distance_matcher)
+        projected_points = camera_pose.project_into_cam(matched_points_3d.points, K)
+
+        # Compute residuals (difference between observed and projected points)
+        residuals.extend(np.linalg.norm((projected_points - matched_points_frame.points), axis=1).ravel())
+    # least_squares() squares each element of the residuals vector and the performs the sumation 
+    return np.array(residuals)
+
+def bundle_adjustment(cam_poses, frames, points_3d, distance_matcher, K, max_nfev=1):
+    """
+    Perform bundle adjustment to optimize camera poses and 3D points.
+    """
+    initial_camera_params = []
+    init_pose = cam_poses[0]
+    optimizing_poses = cam_poses[1:]
+    for pose in optimizing_poses:
+        initial_camera_params.append(pose.flatten())
+
+    initial_params = np.hstack((np.concatenate(initial_camera_params), points_3d.points.ravel()))
+    num_cameras = len(optimizing_poses)
+
+    result = least_squares(
+        reprojection_error,
+        initial_params,
+        args=(num_cameras, frames, init_pose, points_3d, distance_matcher, K),
+        method="trf",
+        verbose=2,
+        max_nfev=max_nfev
+    )
+
+    # Extract optimized camera poses
+    optimized_params = result.x
+    optimized_poses_flat = optimized_params[:num_cameras * 6].reshape((-1, 6))
+    optimized_points_3d_points = optimized_params[num_cameras * 6:].reshape((-1, 3))
+    optimized_points_3d = PointDescriptors(optimized_points_3d_points, points_3d.descriptors)
+
+    optimized_poses = []
+    optimized_poses.append(init_pose)
+    for pose_array in optimized_poses_flat:
+        optimized_pose = CamPose.unflatten(pose_array)
+        optimized_poses.append(optimized_pose)
+
+    return optimized_poses, optimized_points_3d
 
 # Test data
 points_3d = [
@@ -332,8 +412,8 @@ K = np.array([[1000, 0, 500], [0, 1000, 500], [0, 0, 1]]).astype(float)
 #frames = []
 #for pose in poses: frames.append(PointDescriptors(pose.project_into_cam(points_3d, K), descriptors_3d))
 
-frame0 = PointDescriptors(pose0.project_into_cam(points_3d[:20,:], K), descriptors_3d[:20,:])
-frame1 = PointDescriptors(pose1.project_into_cam(points_3d[10:30,:], K), descriptors_3d[10:30,:])
+frame0 = PointDescriptors(pose0.project_into_cam(points_3d[:25,:], K), descriptors_3d[:25,:])
+frame1 = PointDescriptors(pose1.project_into_cam(points_3d[5:25,:], K), descriptors_3d[5:25,:])
 frame2 = PointDescriptors(pose2.project_into_cam(points_3d[10:40,:], K), descriptors_3d[10:40,:])
 frame3 = PointDescriptors(pose3.project_into_cam(points_3d[20:50,:], K), descriptors_3d[20:50,:])
 frame4 = PointDescriptors(pose4.project_into_cam(points_3d[30:50,:], K), descriptors_3d[30:50,:])
@@ -371,6 +451,7 @@ for frame in video_handler:
     poses.append(pose1_est)
     frames.append(frame)
 
+#initial 15 poses
 i = 2
 for frame in frames_list[2:]:
     # Estimate next pose using inliers, add new 3d points
@@ -398,9 +479,9 @@ for frame in frames_list[2:]:
     pose2_est = pnp(corresponding_3d, corresponding_2d, K)
 
     print(poses_gt[i-1].t)
-    pose2_est = pose2.scaled_pose(poses_gt[i-1].t)
+    pose2_est = pose2_est.scaled_pose(poses_gt[i-1].t)
     print(pose2_est.t)
-    poses.append(pose2_est)
+    poses.append(pose2_est) # exac correspondence between poses an frames
     frames.append(frame)
 
     # Triangulating new-found points
@@ -414,20 +495,40 @@ for frame in frames_list[2:]:
         print(f'No new 3d points at step {i}')
         continue
 
-    new_points_3d_est = triangulate_points(pose1_est, 
+    new_points_3d_est = triangulate_points(poses[-2], 
                                         pose2_est,
                                         new_points_matched_1,
                                         new_points_matched_2)
     points_3d_est = points_3d_est.extend_points(new_points_3d_est)
 
+optimized_poses, optimized_points_3d_est = bundle_adjustment(poses, frames, points_3d_est, 1, K, max_nfev=10)
+
+matched_points_3d_est, matched_points_3d = optimized_points_3d_est.points_matcher(
+    PointDescriptors(points_3d, descriptors_3d), 1)
+
+
+
+
+
+
+
+#print('matched_points_3d_est', matched_points_3d_est.points.shape)
+#print('matched_points_3d', matched_points_3d.points.shape)
+#print(points_3d)
+
+
+#print(pose1.R)
+#flattened_pose = pose1.flatten()
+#print(flattened_pose)
+#print(CamPose.unflatten(flattened_pose).R, CamPose.unflatten(flattened_pose).t)
+#print('ground truth', [(pose.R) for pose in poses_gt])
+#print('estimated', len([(pose.R) for pose in optimized_poses]), [(pose.R) for pose in optimized_poses])
+
+#print('ground truth', [(pose.t) for pose in poses_gt])
+#print('estimated', len([(pose.t) for pose in optimized_poses]), [(pose.t) for pose in optimized_poses])
+
 #print('ground truth', [(pose.R) for pose in poses_gt])
 #print('estimated', len([(pose.R) for pose in poses]), [(pose.R) for pose in poses])
-
-
-
-
-
-
 #points_3d_0 = PointDescriptors(points_3d[:4,:], descriptors_3d[:4,:])
 #points_3d_1 = PointDescriptors(points_3d[:4,:], descriptors_3d[:4,:])
 #points_3d = points_3d_0.subtract_points(points_3d_1, 0.1)
