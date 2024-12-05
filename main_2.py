@@ -74,7 +74,6 @@ class CamPose:
 
         # Compute the scale factor
         scale = gt_norm / estimated_norm
-        print(scale)
 
         return CamPose(self.R, self.t * scale)
 
@@ -112,6 +111,28 @@ class PointDescriptors():
         matched_points_2 = PointDescriptors(matched_points2, matched_descriptors2)
 
         return matched_points_1, matched_points_2
+    
+    def subtract_points(self, other_points, distance_threshold): #
+
+        if not isinstance(other_points, PointDescriptors):
+            raise ValueError("Points must be an instance of PointDescriptors.")
+
+        bf = cv2.BFMatcher(cv2.NORM_L2, crossCheck=True)
+
+        raw_matches = bf.match(self.descriptors, other_points.descriptors)
+        matched_indices = np.array([m.queryIdx for m in raw_matches if m.distance < distance_threshold])
+
+        all_indices = np.arange(self.points.shape[0])
+        unmatched_mask = ~np.isin(all_indices, matched_indices)
+
+        unmatched_points = self.points[unmatched_mask]
+        unmatched_descriptors = self.descriptors[unmatched_mask]
+
+        if unmatched_points.size == 0:
+            print("All points matched, no unmatched points remain.")
+            return PointDescriptors(np.empty((0, self.points.shape[1])), np.empty((0, self.descriptors.shape[1])))
+
+        return PointDescriptors(np.array(unmatched_points), np.array(unmatched_descriptors))
     
     def extend_points(self, other_points): #
 
@@ -159,26 +180,33 @@ def compute_relative_pose(matched_frame1, matched_frame2, K, ransac_threshold): 
         print("Fundamental matrix estimation failed.")
         return None
     
+    # Compute pose
     E = K.T @ F @ K
 
-    # Compute pose
-    retval, R, t, mask = cv2.recoverPose(E, 
-                                         matched_frame1.points, 
-                                         matched_frame2.points, 
-                                         K)
-
+    # use inliers to estimate the pose
     inliers = inliers.ravel() > 0
-
-    inliers = np.array(inliers).ravel() > 0
-
-    inlier_frame1 = PointDescriptors(matched_frame0.points[inliers], 
-                                     matched_frame0.descriptors[inliers])
-    inlier_frame2 = PointDescriptors(matched_frame1.points[inliers], 
+    inlier_frame1 = PointDescriptors(matched_frame1.points[inliers], 
                                      matched_frame1.descriptors[inliers])
+    inlier_frame2 = PointDescriptors(matched_frame2.points[inliers], 
+                                     matched_frame2.descriptors[inliers])
+
+    retval, R, t, mask = cv2.recoverPose(E, 
+                                         inlier_frame1.points, 
+                                         inlier_frame2.points, 
+                                         K)
     
     relative_pose = CamPose(R, t.reshape(-1)).cam_pose_inv()
 
     return relative_pose, inlier_frame1, inlier_frame2
+
+def pnp(corresponding_3d, corresponding_2d, K): #
+    retval, rvec, tvec, inliers = cv2.solvePnPRansac(corresponding_3d.points, corresponding_2d.points, K, None)
+    R, _ = cv2.Rodrigues(rvec)
+    pose = CamPose(R, tvec.reshape(3,))
+    pose = pose.cam_pose_inv() # Camera pose with respect to origin. w_T_c
+
+    return pose
+
 
 # Test data
 points_3d = [
@@ -233,7 +261,6 @@ points_3d = [
     [4, 5, 14.80],
     [-5, 1, 15.00]
 ]
-points_3d = np.array(points_3d)
 
 descriptors_3d = [
     [1.87, 4.75, 3.66, 2.99, 0.78],
@@ -287,25 +314,148 @@ descriptors_3d = [
     [4.7, 4.77, 4.57, 1.85, 0.08],
     [4.64, 2.14, 4.83, 4.82, 4.27]
 ]
+
+points_3d = np.array(points_3d)
 descriptors_3d = np.array(descriptors_3d).astype(np.float32)
 
 pose0 = CamPose(np.eye(3), np.array([0, 0, 0]))
-pose1 = CamPose(R.from_euler('x', 10, degrees=True).as_matrix(), np.array([0, 1, 0.5]))
-pose2 = CamPose(R.from_euler('y', 10, degrees=True).as_matrix(), np.array([1, 1, 1]))
-pose3 = CamPose(R.from_euler('z', 10, degrees=True).as_matrix(), np.array([1, 0, 1.5]))
-pose4 = CamPose(R.from_euler('x', 5, degrees=True).as_matrix(), np.array([1.5, 1, 2]))
-pose5 = CamPose(R.from_euler('y', 5, degrees=True).as_matrix(), np.array([0, 1.5, 2.5]))
+pose1 = CamPose(R.from_euler('x', 30, degrees=True).as_matrix(), np.array([0, 1, 0.5]))
+pose2 = CamPose(R.from_euler('y', 30, degrees=True).as_matrix(), np.array([1, 1, 1]))
+pose3 = CamPose(R.from_euler('z', 30, degrees=True).as_matrix(), np.array([1, 0, 1.5]))
+pose4 = CamPose(R.from_euler('x', 20, degrees=True).as_matrix(), np.array([1.5, 1, 2]))
+pose5 = CamPose(R.from_euler('y', 20, degrees=True).as_matrix(), np.array([0, 1.5, 2.5]))
 
-K = np.array([[1000, 0, 500], [0, 1000, 500], [0, 0, 1]])
+poses_gt = [pose0, pose1, pose2, pose3, pose4, pose5]
 
-frame0 = PointDescriptors(pose0.project_into_cam(points_3d[:15,:], K), descriptors_3d[:15,:])
-frame1 = PointDescriptors(pose1.project_into_cam(points_3d[5:20,:], K), descriptors_3d[5:20,:])
+K = np.array([[1000, 0, 500], [0, 1000, 500], [0, 0, 1]]).astype(float)
 
-matched_frame0, matched_frame1 = frame0.points_matcher(frame1, 0.1)
+#frames = []
+#for pose in poses: frames.append(PointDescriptors(pose.project_into_cam(points_3d, K), descriptors_3d))
+
+frame0 = PointDescriptors(pose0.project_into_cam(points_3d[:20,:], K), descriptors_3d[:20,:])
+frame1 = PointDescriptors(pose1.project_into_cam(points_3d[10:30,:], K), descriptors_3d[10:30,:])
+frame2 = PointDescriptors(pose2.project_into_cam(points_3d[10:40,:], K), descriptors_3d[10:40,:])
+frame3 = PointDescriptors(pose3.project_into_cam(points_3d[20:50,:], K), descriptors_3d[20:50,:])
+frame4 = PointDescriptors(pose4.project_into_cam(points_3d[30:50,:], K), descriptors_3d[30:50,:])
+frame5 = PointDescriptors(pose5.project_into_cam(points_3d[25:50,:], K), descriptors_3d[25:50,:])
+
+frames_list = [frame0, frame1, frame2, frame3, frame4, frame5]
+video_handler = iter(frames_list)
+
+#initial two poses
+frames = []
+poses = [CamPose(np.eye(3), np.array([0, 0, 0]))]
+i = 0
+for frame in video_handler:
+    # Initial frame
+    i = i + 1
+    if i == 1: 
+        frames.append(frame)
+        continue
+
+    if len(poses) > 1: break
+
+    # Estimate pose of second view, extract inliers, triangulate points
+    matched_frame0, matched_frame1 = frames[0].points_matcher(frame, 1)
+    if matched_frame0.points.shape[0] < 10: 
+        print('Not enough matched frames at initialization')
+        continue
+    pose1_est, inlier_frame0, inlier_frame1 = compute_relative_pose(matched_frame0, 
+                                                                    matched_frame1, K, ransac_threshold=1)
+    if inlier_frame0.points.shape[0] < 10:
+        print('Not enough inliers frames at initialization')
+        continue
+    pose1_est = pose1_est.scaled_pose(poses_gt[1].t) # Scaling with ground truth
+    points_3d_est = triangulate_points(pose0, pose1_est, inlier_frame0, inlier_frame1)
+
+    poses.append(pose1_est)
+    frames.append(frame)
+
+i = 2
+for frame in frames_list[2:]:
+    # Estimate next pose using inliers, add new 3d points
+    matched_frame1, matched_frame2 = frames[-1].points_matcher(frame, 1)
+    #print('matched_frame1.points.shape[0]', matched_frame1.points.shape[0])
+    i = i + 1
+
+    if matched_frame1.points.shape[0] < 7:
+        print(f'Not enough matched points points at step {i}')
+        continue
+
+    _, inlier_frame1, inlier_frame2 = compute_relative_pose(matched_frame1, matched_frame2, K, ransac_threshold=1)
+    #print('inlier_frame1.points.shape[0]', inlier_frame1.points.shape[0])
+    if inlier_frame1.points.shape[0] < 5:
+        print(f'Not enough inliers points at step {i}')
+        continue
+
+    corresponding_3d, corresponding_2d = points_3d_est.points_matcher(inlier_frame2, 1)
+    #print('corresponding_2d.points.shape[0]', corresponding_2d.points.shape[0])
+    #print('points_3d_est.points.shape[0]', points_3d_est.points.shape[0])
+    if corresponding_2d.points.shape[0] < 5:
+        print(f'Not enough corresponding points at step {i}')
+        continue
+
+    pose2_est = pnp(corresponding_3d, corresponding_2d, K)
+
+    print(poses_gt[i-1].t)
+    pose2_est = pose2.scaled_pose(poses_gt[i-1].t)
+    print(pose2_est.t)
+    poses.append(pose2_est)
+    frames.append(frame)
+
+    # Triangulating new-found points
+    new_points_2 = inlier_frame2.subtract_points(corresponding_2d, 1)
+    if new_points_2.points.shape[0]== 0:
+        print(f'No new 3d points at step {i}')
+        continue
+    new_points_matched_1, new_points_matched_2 = inlier_frame1.points_matcher(new_points_2, 1)
+
+    if new_points_matched_1.points.shape[0] == 0:
+        print(f'No new 3d points at step {i}')
+        continue
+
+    new_points_3d_est = triangulate_points(pose1_est, 
+                                        pose2_est,
+                                        new_points_matched_1,
+                                        new_points_matched_2)
+    points_3d_est = points_3d_est.extend_points(new_points_3d_est)
+
+#print('ground truth', [(pose.R) for pose in poses_gt])
+#print('estimated', len([(pose.R) for pose in poses]), [(pose.R) for pose in poses])
 
 
-relative_pose, inlier_frame0, inlier_frame1 = compute_relative_pose(matched_frame0, 
-                                                                   matched_frame1, K, ransac_threshold=1)
+
+
+
+
+#points_3d_0 = PointDescriptors(points_3d[:4,:], descriptors_3d[:4,:])
+#points_3d_1 = PointDescriptors(points_3d[:4,:], descriptors_3d[:4,:])
+#points_3d = points_3d_0.subtract_points(points_3d_1, 0.1)
+#print('points', points_3d.points)
+
+#print('estimated pose3', pose2_est.R, pose2_est.t)
+#print('pose3', pose2.R, pose2.t)
+#print('corresponding_3d shape', corresponding_3d.points.shape)
+#print(inlier_frame1.points)
+#print(points_3d_est.points)
+#print('estimated_scaled pose1', pose1_est.scaled_pose(pose1.t).R, pose1_est.scaled_pose(pose1.t).t)
+#print('pose1', pose1.R, pose1.t)
+# Triangulate two previous views
+# match epipolar inliers in current view, use them to run pnp
+#
+
+
+
+
+
+
+#frame0 = PointDescriptors(pose0.project_into_cam(points_3d[:15,:], K), descriptors_3d[:15,:])
+#frame1 = PointDescriptors(pose1.project_into_cam(points_3d[5:20,:], K), descriptors_3d[5:20,:])
+#matched_frame0, matched_frame1 = frame0.points_matcher(frame1, 0.1)
+#relative_pose, inlier_frame0, inlier_frame1 = compute_relative_pose(matched_frame0, 
+#                                                                   matched_frame1, K, ransac_threshold=1)
+
+
 
 
 #print('points', matched_frame0.points)
@@ -326,3 +476,22 @@ relative_pose, inlier_frame0, inlier_frame1 = compute_relative_pose(matched_fram
 #print(points3d_1.points)
 #print(points3d_2.points)
 #print('points3d_extended', points3d_extended.points)
+
+
+# First three frames
+#print('matched_frame0',matched_frame0.points.shape)
+#print('inlier_frame0',inlier_frame0.points.shape)
+#print('frames[1]',frames[1].points.shape)
+#print('frames[2]',frames[2].points.shape)
+#print('matched_frame1',matched_frame1.points.shape)
+#print('inlier_frame2',inlier_frame2.points.shape)
+#print('points_3d_est',points_3d_est.points.shape)
+#print('corresponding_2d',corresponding_2d.points.shape)
+#print('pose2', pose2.R, pose2.t)
+#print('pose2_est', pose2_est.R, pose2_est.t)
+#print('new_points_2', new_points_2.points.shape)
+#print('new_points_matched_1', new_points_matched_1.points.shape)
+#print('new_points_matched_2', new_points_matched_2.points.shape)
+#print('new_points_3d_est.points', new_points_3d_est.points) #not 20 to 35
+#print('points_3d_20to35',points_3d[20:35,:])
+#print(points_3d[5:35,:],points_3d_est.points)
