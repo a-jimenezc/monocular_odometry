@@ -252,13 +252,17 @@ def reprojection_error(params, num_cameras, frames, init_pose, points_3d, distan
     # least_squares() squares each element of the residuals vector and the performs the sumation 
     return np.array(residuals)
 
-def bundle_adjustment(cam_poses, frames, points_3d, distance_matcher, K, max_nfev=1):
+def bundle_adjustment(cam_poses, frames, points_3d, K, last_n=5, distance_matcher=1, max_nfev=1):
     """
     Perform bundle adjustment to optimize camera poses and 3D points.
+    Modifies, cam_poses
     """
+    poses_to_optimize = cam_poses[-last_n:]
+    frames_to_optimize = frames[-last_n:]
+
     initial_camera_params = []
-    init_pose = cam_poses[0]
-    optimizing_poses = cam_poses[1:]
+    init_pose = poses_to_optimize[0]
+    optimizing_poses = poses_to_optimize[1:]
     for pose in optimizing_poses:
         initial_camera_params.append(pose.flatten())
 
@@ -268,7 +272,7 @@ def bundle_adjustment(cam_poses, frames, points_3d, distance_matcher, K, max_nfe
     result = least_squares(
         reprojection_error,
         initial_params,
-        args=(num_cameras, frames, init_pose, points_3d, distance_matcher, K),
+        args=(num_cameras, frames_to_optimize, init_pose, points_3d, distance_matcher, K),
         method="trf",
         verbose=2,
         max_nfev=max_nfev
@@ -286,7 +290,90 @@ def bundle_adjustment(cam_poses, frames, points_3d, distance_matcher, K, max_nfe
         optimized_pose = CamPose.unflatten(pose_array)
         optimized_poses.append(optimized_pose)
 
-    return optimized_poses, optimized_points_3d
+    cam_poses[-last_n:] = optimized_poses
+
+    return cam_poses, optimized_points_3d
+
+def frame_processing(poses, frames, points_3d_est, video_handler, poses_gt, frames_to_process=2):
+    '''
+    Modifieas lists of poses, frames, and points_3d_est object
+    '''
+
+    i = 0
+    frames_processed = 0
+    print('before inner loop in frame processing')
+    for frame in video_handler:
+        print('after inner loop in frame processing')
+        
+        # Estimate next pose using inliers, add new 3d points
+        matched_frame1, matched_frame2 = frames[-1].points_matcher(frame, 1)
+        #print('matched_frame1.points.shape[0]', matched_frame1.points.shape[0])
+        i = i + 1
+
+        if matched_frame1.points.shape[0] < 7:
+            print(f'Not enough matched points points at step {i}')
+            continue
+
+        _, inlier_frame1, inlier_frame2 = compute_relative_pose(matched_frame1, matched_frame2, K, ransac_threshold=1)
+        #print('inlier_frame1.points.shape[0]', inlier_frame1.points.shape[0])
+        if inlier_frame1.points.shape[0] < 5:
+            print(f'Not enough inliers points at step {i}')
+            continue
+
+        corresponding_3d, corresponding_2d = points_3d_est.points_matcher(inlier_frame2, 1)
+        #print('corresponding_2d.points.shape[0]', corresponding_2d.points.shape[0])
+        #print('points_3d_est.points.shape[0]', points_3d_est.points.shape[0])
+        if corresponding_2d.points.shape[0] < 5:
+            print(f'Not enough corresponding points at step {i}')
+            continue
+
+        pose2_est = pnp(corresponding_3d, corresponding_2d, K)
+
+        pose2_est = pose2_est.scaled_pose(poses_gt[i-1].t)
+    
+        poses.append(pose2_est) # exact correspondence between poses an frames
+        frames.append(frame)
+
+        frames_processed = frames_processed + 1
+
+        if frames_processed > (frames_to_process-1) : 
+            # Triangulating new-found points
+            new_points_2 = inlier_frame2.subtract_points(corresponding_2d, 1)
+            if new_points_2.points.shape[0]== 0:
+                print(f'No new 3d points at step {i}')
+                break
+            new_points_matched_1, new_points_matched_2 = inlier_frame1.points_matcher(new_points_2, 1)
+
+            if new_points_matched_1.points.shape[0] == 0:
+                print(f'No new 3d points at step {i}')
+                break
+
+            new_points_3d_est = triangulate_points(poses[-2], 
+                                                pose2_est,
+                                                new_points_matched_1,
+                                                new_points_matched_2)
+            points_3d_est = points_3d_est.extend_points(new_points_3d_est)
+            break
+
+        # Triangulating new-found points
+        new_points_2 = inlier_frame2.subtract_points(corresponding_2d, 1)
+        if new_points_2.points.shape[0]== 0:
+            print(f'No new 3d points at step {i}')
+            continue
+        new_points_matched_1, new_points_matched_2 = inlier_frame1.points_matcher(new_points_2, 1)
+
+        if new_points_matched_1.points.shape[0] == 0:
+            print(f'No new 3d points at step {i}')
+            continue
+
+        new_points_3d_est = triangulate_points(poses[-2], 
+                                            pose2_est,
+                                            new_points_matched_1,
+                                            new_points_matched_2)
+        points_3d_est = points_3d_est.extend_points(new_points_3d_est)
+
+
+    return poses, frames, points_3d_est
 
 # Test data
 points_3d = [
@@ -404,8 +491,11 @@ pose2 = CamPose(R.from_euler('y', 30, degrees=True).as_matrix(), np.array([1, 1,
 pose3 = CamPose(R.from_euler('z', 30, degrees=True).as_matrix(), np.array([1, 0, 1.5]))
 pose4 = CamPose(R.from_euler('x', 20, degrees=True).as_matrix(), np.array([1.5, 1, 2]))
 pose5 = CamPose(R.from_euler('y', 20, degrees=True).as_matrix(), np.array([0, 1.5, 2.5]))
+pose6 = CamPose(R.from_euler('x', 15, degrees=True).as_matrix(), np.array([0, 1.5, 3.5]))
+pose7 = CamPose(R.from_euler('x', 15, degrees=True).as_matrix(), np.array([0, 1.5, 4.0]))
+pose8 = CamPose(R.from_euler('x', 15, degrees=True).as_matrix(), np.array([0, 1.5, 4.5]))
 
-poses_gt = [pose0, pose1, pose2, pose3, pose4, pose5]
+poses_gt = [pose0, pose1, pose2, pose3, pose4, pose5, pose6, pose7, pose8]
 
 K = np.array([[1000, 0, 500], [0, 1000, 500], [0, 0, 1]]).astype(float)
 
@@ -418,9 +508,41 @@ frame2 = PointDescriptors(pose2.project_into_cam(points_3d[10:40,:], K), descrip
 frame3 = PointDescriptors(pose3.project_into_cam(points_3d[20:50,:], K), descriptors_3d[20:50,:])
 frame4 = PointDescriptors(pose4.project_into_cam(points_3d[30:50,:], K), descriptors_3d[30:50,:])
 frame5 = PointDescriptors(pose5.project_into_cam(points_3d[25:50,:], K), descriptors_3d[25:50,:])
+frame6 = PointDescriptors(pose6.project_into_cam(points_3d[40:50,:], K), descriptors_3d[40:50,:])
+frame7 = PointDescriptors(pose7.project_into_cam(points_3d[40:50,:], K), descriptors_3d[40:50,:])
+frame8 = PointDescriptors(pose8.project_into_cam(points_3d[30:50,:], K), descriptors_3d[30:50,:])
 
-frames_list = [frame0, frame1, frame2, frame3, frame4, frame5]
-video_handler = iter(frames_list)
+frames_list = [frame0, frame1, frame2, frame3, frame4, frame5, frame6, frame7, frame8]
+
+def frames_iterator(frames_list):
+    for frame in frames_list:
+        yield frame
+video_handler = frames_iterator(frames_list)
+
+class EndOfFramesError(Exception):
+    """Custom exception to indicate the end of the frames."""
+    pass
+
+class FrameListHandler:
+    def __init__(self, frames_list):
+        self.frames_list = frames_list
+        self.index = 0  # Track the current position in the list
+
+    def __iter__(self):
+        return self  # The class itself is an iterator
+
+    def __next__(self):
+        #print(f"Index: {self.index}, Length: {len(self.frames_list)}")
+        if self.index >= len(self.frames_list):
+            print("EndOfFramesError")
+            raise EndOfFramesError("No more frames to process.")  # No more frames to process
+
+        frame = self.frames_list[self.index]
+        self.index += 1
+        return frame
+
+video_handler = FrameListHandler(frames_list)
+
 
 #initial two poses
 frames = []
@@ -432,8 +554,6 @@ for frame in video_handler:
     if i == 1: 
         frames.append(frame)
         continue
-
-    if len(poses) > 1: break
 
     # Estimate pose of second view, extract inliers, triangulate points
     matched_frame0, matched_frame1 = frames[0].points_matcher(frame, 1)
@@ -450,70 +570,44 @@ for frame in video_handler:
 
     poses.append(pose1_est)
     frames.append(frame)
+    if len(poses) > 1: break
 
 #initial 15 poses
-i = 2
-for frame in frames_list[2:]:
-    # Estimate next pose using inliers, add new 3d points
-    matched_frame1, matched_frame2 = frames[-1].points_matcher(frame, 1)
-    #print('matched_frame1.points.shape[0]', matched_frame1.points.shape[0])
-    i = i + 1
-
-    if matched_frame1.points.shape[0] < 7:
-        print(f'Not enough matched points points at step {i}')
-        continue
-
-    _, inlier_frame1, inlier_frame2 = compute_relative_pose(matched_frame1, matched_frame2, K, ransac_threshold=1)
-    #print('inlier_frame1.points.shape[0]', inlier_frame1.points.shape[0])
-    if inlier_frame1.points.shape[0] < 5:
-        print(f'Not enough inliers points at step {i}')
-        continue
-
-    corresponding_3d, corresponding_2d = points_3d_est.points_matcher(inlier_frame2, 1)
-    #print('corresponding_2d.points.shape[0]', corresponding_2d.points.shape[0])
-    #print('points_3d_est.points.shape[0]', points_3d_est.points.shape[0])
-    if corresponding_2d.points.shape[0] < 5:
-        print(f'Not enough corresponding points at step {i}')
-        continue
-
-    pose2_est = pnp(corresponding_3d, corresponding_2d, K)
-
-    print(poses_gt[i-1].t)
-    pose2_est = pose2_est.scaled_pose(poses_gt[i-1].t)
-    print(pose2_est.t)
-    poses.append(pose2_est) # exac correspondence between poses an frames
-    frames.append(frame)
-
-    # Triangulating new-found points
-    new_points_2 = inlier_frame2.subtract_points(corresponding_2d, 1)
-    if new_points_2.points.shape[0]== 0:
-        print(f'No new 3d points at step {i}')
-        continue
-    new_points_matched_1, new_points_matched_2 = inlier_frame1.points_matcher(new_points_2, 1)
-
-    if new_points_matched_1.points.shape[0] == 0:
-        print(f'No new 3d points at step {i}')
-        continue
-
-    new_points_3d_est = triangulate_points(poses[-2], 
-                                        pose2_est,
-                                        new_points_matched_1,
-                                        new_points_matched_2)
-    points_3d_est = points_3d_est.extend_points(new_points_3d_est)
-
-optimized_poses, optimized_points_3d_est = bundle_adjustment(poses, frames, points_3d_est, 1, K, max_nfev=10)
-
-matched_points_3d_est, matched_points_3d = optimized_points_3d_est.points_matcher(
-    PointDescriptors(points_3d, descriptors_3d), 1)
+frames_processing = 2
+poses, frames, points_3d_est = frame_processing(poses, frames, points_3d_est, 
+                                                video_handler, poses_gt[2:4], frames_to_process=frames_processing)
+poses, points_3d_est = bundle_adjustment(poses, frames, points_3d_est, K, last_n=frames_processing, 
+                                         distance_matcher=1, max_nfev=10)
+for i in range (3):
+    print(i)
+    frames_processing = 2
+    try:
+        gt_index = 4+(frames_processing*i)
+        poses, frames, points_3d_est = frame_processing(poses, frames, points_3d_est, 
+                                                    video_handler, poses_gt[gt_index:], frames_to_process=frames_processing)
+    except (EndOfFramesError, IndexError):
+        print('breaking loop')
+        break
+    poses, points_3d_est = bundle_adjustment(poses, frames, points_3d_est, K, last_n=2, 
+                                            distance_matcher=0.1, max_nfev=10)
+        
 
 
 
 
 
+print('ground truth', [(pose.t) for pose in poses_gt])
+print('estimated', len([(pose.t) for pose in poses]), [(pose.t) for pose in poses])
 
 
-#print('matched_points_3d_est', matched_points_3d_est.points.shape)
-#print('matched_points_3d', matched_points_3d.points.shape)
+
+
+
+#matched_points_3d_est, matched_points_3d = points_3d_est.points_matcher(
+#    PointDescriptors(points_3d, descriptors_3d), 1)
+
+#print('matched_points_3d_est', matched_points_3d_est.points[-5:])
+#print('matched_points_3d', matched_points_3d.points[-5:])
 #print(points_3d)
 
 
@@ -521,8 +615,7 @@ matched_points_3d_est, matched_points_3d = optimized_points_3d_est.points_matche
 #flattened_pose = pose1.flatten()
 #print(flattened_pose)
 #print(CamPose.unflatten(flattened_pose).R, CamPose.unflatten(flattened_pose).t)
-#print('ground truth', [(pose.R) for pose in poses_gt])
-#print('estimated', len([(pose.R) for pose in optimized_poses]), [(pose.R) for pose in optimized_poses])
+
 
 #print('ground truth', [(pose.t) for pose in poses_gt])
 #print('estimated', len([(pose.t) for pose in optimized_poses]), [(pose.t) for pose in optimized_poses])
