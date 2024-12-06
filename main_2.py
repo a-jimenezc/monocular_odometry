@@ -2,6 +2,8 @@ import cv2
 import numpy as np
 from scipy.optimize import least_squares
 from scipy.spatial.transform import Rotation as R
+from src.plot_poses_plane import plot_poses
+from src.plot_points import plot_point_cloud
 
 
 class CamPose:
@@ -301,9 +303,7 @@ def frame_processing(poses, frames, points_3d_est, video_handler, poses_gt, fram
 
     i = 0
     frames_processed = 0
-    print('before inner loop in frame processing')
     for frame in video_handler:
-        print('after inner loop in frame processing')
         
         # Estimate next pose using inliers, add new 3d points
         matched_frame1, matched_frame2 = frames[-1].points_matcher(frame, 1)
@@ -492,10 +492,12 @@ pose3 = CamPose(R.from_euler('z', 30, degrees=True).as_matrix(), np.array([1, 0,
 pose4 = CamPose(R.from_euler('x', 20, degrees=True).as_matrix(), np.array([1.5, 1, 2]))
 pose5 = CamPose(R.from_euler('y', 20, degrees=True).as_matrix(), np.array([0, 1.5, 2.5]))
 pose6 = CamPose(R.from_euler('x', 15, degrees=True).as_matrix(), np.array([0, 1.5, 3.5]))
-pose7 = CamPose(R.from_euler('x', 15, degrees=True).as_matrix(), np.array([0, 1.5, 4.0]))
+pose7 = CamPose(R.from_euler('x', 15, degrees=True).as_matrix(), np.array([0, 1.5, 3.5]))
 pose8 = CamPose(R.from_euler('x', 15, degrees=True).as_matrix(), np.array([0, 1.5, 4.5]))
+pose9 = CamPose(R.from_euler('y', 15, degrees=True).as_matrix(), np.array([0, 1.5, 5]))
+pose10 = CamPose(R.from_euler('z', 15, degrees=True).as_matrix(), np.array([0, 1.5, 5.5]))
 
-poses_gt = [pose0, pose1, pose2, pose3, pose4, pose5, pose6, pose7, pose8]
+poses_gt = [pose0, pose1, pose2, pose3, pose4, pose5, pose6, pose7, pose8, pose9, pose10]
 
 K = np.array([[1000, 0, 500], [0, 1000, 500], [0, 0, 1]]).astype(float)
 
@@ -511,8 +513,10 @@ frame5 = PointDescriptors(pose5.project_into_cam(points_3d[25:50,:], K), descrip
 frame6 = PointDescriptors(pose6.project_into_cam(points_3d[40:50,:], K), descriptors_3d[40:50,:])
 frame7 = PointDescriptors(pose7.project_into_cam(points_3d[40:50,:], K), descriptors_3d[40:50,:])
 frame8 = PointDescriptors(pose8.project_into_cam(points_3d[30:50,:], K), descriptors_3d[30:50,:])
+frame9 = PointDescriptors(pose9.project_into_cam(points_3d[40:50,:], K), descriptors_3d[40:50,:])
+frame10 = PointDescriptors(pose10.project_into_cam(points_3d[35:50,:], K), descriptors_3d[35:50,:])
 
-frames_list = [frame0, frame1, frame2, frame3, frame4, frame5, frame6, frame7, frame8]
+frames_list = [frame0, frame1, frame2, frame3, frame4, frame5, frame6, frame7, frame8, frame9, frame10]
 
 def frames_iterator(frames_list):
     for frame in frames_list:
@@ -578,9 +582,8 @@ poses, frames, points_3d_est = frame_processing(poses, frames, points_3d_est,
                                                 video_handler, poses_gt[2:4], frames_to_process=frames_processing)
 poses, points_3d_est = bundle_adjustment(poses, frames, points_3d_est, K, last_n=frames_processing, 
                                          distance_matcher=1, max_nfev=10)
-for i in range (3):
-    print(i)
-    frames_processing = 2
+for i in range (2):
+    frames_processing = 3
     try:
         gt_index = 4+(frames_processing*i)
         poses, frames, points_3d_est = frame_processing(poses, frames, points_3d_est, 
@@ -596,8 +599,19 @@ for i in range (3):
 
 
 
-print('ground truth', [(pose.t) for pose in poses_gt])
-print('estimated', len([(pose.t) for pose in poses]), [(pose.t) for pose in poses])
+gt = [(pose.R) for pose in poses_gt]
+#print('ground truth', gt[-1])
+est = [(pose.R) for pose in poses]
+#print('estimated', len(est), est[-1])
+
+plot_poses(poses_gt, plane='xz')
+plot_point_cloud(points_3d_est.points)
+
+matched_points_3d_est, matched_points_3d = points_3d_est.points_matcher(
+    PointDescriptors(points_3d, descriptors_3d), 1)
+
+print('matched_points_3d_est', matched_points_3d_est.points[-5:])
+print('matched_points_3d', matched_points_3d.points[-5:])
 
 
 
@@ -609,6 +623,8 @@ print('estimated', len([(pose.t) for pose in poses]), [(pose.t) for pose in pose
 #print('matched_points_3d_est', matched_points_3d_est.points[-5:])
 #print('matched_points_3d', matched_points_3d.points[-5:])
 #print(points_3d)
+
+
 
 
 #print(pose1.R)

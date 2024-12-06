@@ -7,7 +7,7 @@ from src.video_data_handler import VideoDataHandler
 import numpy as np
 import cv2
 
-video_path = 'test_data/vid90.avi'
+video_path = 'test_data/vid7.avi'
 #video_path = "http://10.0.0.90:5000/video_feed"
 
 K = np.array([[608.56811625, 0, 629.83269351],[0, 614.54502235, 346.79688358],[0, 0, 1]], dtype=np.float32)
