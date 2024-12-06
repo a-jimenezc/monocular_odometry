@@ -66,7 +66,7 @@ def frame_processing(poses, frames, points_3d_est, video_handler, poses_gt, K, f
         
         # Estimate next pose using inliers, add new 3d points
         matched_frame1, matched_frame2 = frames[-1].points_matcher(frame, points_matcher_treshold)
-        #print('matched_frame1.points.shape[0]', matched_frame1.points.shape[0])
+        print('matched_frame1.points.shape[0]', matched_frame1.points.shape[0])
         i = i + 1
 
         if matched_frame1.points.shape[0] < 7:

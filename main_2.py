@@ -604,7 +604,7 @@ gt = [(pose.R) for pose in poses_gt]
 est = [(pose.R) for pose in poses]
 #print('estimated', len(est), est[-1])
 
-plot_poses(poses_gt, plane='xz')
+plot_poses(poses, plane='xz')
 plot_point_cloud(points_3d_est.points)
 
 matched_points_3d_est, matched_points_3d = points_3d_est.points_matcher(

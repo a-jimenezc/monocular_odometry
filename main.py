@@ -61,16 +61,16 @@ for frame in video_handler:
     if len(poses) > 1: break
 
 #initial 15 poses
-frames_processing = 2
+frames_processing = 15
 poses_gt_init = poses_gt#[2:4]
 poses, frames, points_3d_est = frame_processing(poses, frames, points_3d_est, 
                                                 video_handler, poses_gt_init, K,
                                                 frames_to_process=frames_processing)
-poses, points_3d_est = bundle_adjustment(poses, frames, points_3d_est, K, last_n=frames_processing, 
-                                         distance_matcher=points_matcher_treshold, 
-                                         max_nfev=10)
-for i in range (10):
-    frames_processing = 3
+#poses, points_3d_est = bundle_adjustment(poses, frames, points_3d_est, K, last_n=frames_processing, 
+#                                         distance_matcher=points_matcher_treshold, 
+#                                         max_nfev=10)
+for i in range (300):
+    frames_processing = 15
     try:
         gt_index = 4+(frames_processing*i)
         poses_gt_proc = poses_gt#[gt_index:]
@@ -84,7 +84,7 @@ for i in range (10):
     #                                        distance_matcher=points_matcher_treshold, 
     #                                        max_nfev=10)
 
-plot_poses(poses_gt, plane='xz')
+plot_poses(poses, plane='xz')
 plot_point_cloud(points_3d_est.points)
 #gt = [(pose.R) for pose in poses_gt]
 #print('ground truth', gt[-1])
