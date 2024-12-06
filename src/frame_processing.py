@@ -4,6 +4,7 @@ from src.point_descriptors import PointDescriptors
 from src.cam_pose import CamPose
 
 points_matcher_treshold = 30
+ransac_threshold = 10
 
 def triangulate_points(pose1, pose2, matched_frame_1, matched_frame_2, K): #
     P1 = pose1.projection_matrix(K)
@@ -73,7 +74,7 @@ def frame_processing(poses, frames, points_3d_est, video_handler, poses_gt, K, f
             print(f'Not enough matched points points at step {i}')
             continue
 
-        _, inlier_frame1, inlier_frame2 = compute_relative_pose(matched_frame1, matched_frame2, K, ransac_threshold=1)
+        _, inlier_frame1, inlier_frame2 = compute_relative_pose(matched_frame1, matched_frame2, K, ransac_threshold=ransac_threshold)
         #print('inlier_frame1.points.shape[0]', inlier_frame1.points.shape[0])
         if inlier_frame1.points.shape[0] < 5:
             print(f'Not enough inliers points at step {i}')
