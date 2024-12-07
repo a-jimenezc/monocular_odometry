@@ -3,8 +3,6 @@ import numpy as np
 from src.point_descriptors import PointDescriptors
 from src.cam_pose import CamPose
 
-points_matcher_treshold = 30
-ransac_threshold = 10
 
 def triangulate_points(pose1, pose2, matched_frame_1, matched_frame_2, K): #
     P1 = pose1.projection_matrix(K)
@@ -17,7 +15,7 @@ def triangulate_points(pose1, pose2, matched_frame_1, matched_frame_2, K): #
 
 def compute_relative_pose(matched_frame1, matched_frame2, K, ransac_threshold): #
 
-    if len(matched_frame1.points) < 5:
+    if len(matched_frame1.points) < 8:
         raise ValueError("Insufficient points for essential matrix computation (minimum 5 points required).")
 
     F, inliers = cv2.findFundamentalMat(matched_frame1.points,
@@ -28,7 +26,7 @@ def compute_relative_pose(matched_frame1, matched_frame2, K, ransac_threshold): 
     if F is None or inliers is None:
         print("Fundamental matrix estimation failed.")
         return None
-    
+
     # Compute pose
     E = K.T @ F @ K
 
@@ -56,7 +54,8 @@ def pnp(corresponding_3d, corresponding_2d, K): #
 
     return pose
 
-def frame_processing(poses, frames, points_3d_est, video_handler, poses_gt, K, frames_to_process=2):
+def frame_processing(poses, frames, points_3d_est, video_handler, poses_gt, K, ransac_threshold, 
+                     points_matcher_treshold, frames_to_process=2):
     '''
     Modifieas lists of poses, frames, and points_3d_est object
     '''
@@ -70,7 +69,7 @@ def frame_processing(poses, frames, points_3d_est, video_handler, poses_gt, K, f
         print('matched_frame1.points.shape[0]', matched_frame1.points.shape[0])
         i = i + 1
 
-        if matched_frame1.points.shape[0] < 7:
+        if matched_frame1.points.shape[0] < 8:
             print(f'Not enough matched points points at step {i}')
             continue
 
