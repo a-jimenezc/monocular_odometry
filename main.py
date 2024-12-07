@@ -78,9 +78,9 @@ poses, frames, points_3d_est = frame_processing(poses, frames, points_3d_est,
                                                 points_matcher_treshold,
                                                 frames_to_process=frames_processing)
 
-#poses, points_3d_est = bundle_adjustment(poses, frames, points_3d_est, K, last_n=frames_processing, 
-#                                         distance_matcher=points_matcher_treshold, 
-#                                         max_nfev=10)
+poses, points_3d_est = bundle_adjustment(poses, frames, points_3d_est, K, last_n=frames_processing, 
+                                         distance_matcher=points_matcher_treshold, 
+                                         max_nfev=10)
 for i in range (15):
     frames_processing = 15
     try:
