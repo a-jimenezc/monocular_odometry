@@ -14,14 +14,11 @@ points_matcher_treshold = 50
 ransac_threshold = 2
 
 video_path = 'test_data/output.mp4'
+#video_path = 'test_data/vid6.avi'
 
 K = np.array([[608.56811625, 0, 629.83269351],[0, 614.54502235, 346.79688358],[0, 0, 1]], dtype=np.float32)
 
-K_00 = np.array([
-    [9.842439e+02, 0.000000e+00, 6.900000e+02],
-    [0.000000e+00, 9.808141e+02, 2.331966e+02],
-    [0.000000e+00, 0.000000e+00, 1.000000e+00]
-], dtype=np.float32)
+K = np.array([[9.842439e+02, 0.000000e+00, 6.900000e+02],[0.000000e+00, 9.808141e+02, 2.331966e+02],[0.000000e+00, 0.000000e+00, 1.000000e+00]], dtype=np.float32)
 
 if K.shape != (3, 3) or np.linalg.det(K) == 0:
     raise ValueError("Invalid intrinsic matrix provided.")
@@ -47,7 +44,7 @@ for frame in video_handler:
     matches = bf.match(frames[0].descriptors, frame.descriptors)
     print(len(matches))
     match_distances = [m.distance for m in matches]
-    print(np.mean(match_distances))
+    #print(np.mean(match_distances))
     if np.mean(match_distances) < 150: continue
 
 
@@ -78,9 +75,9 @@ poses, frames, points_3d_est = frame_processing(poses, frames, points_3d_est,
                                                 points_matcher_treshold,
                                                 frames_to_process=frames_processing)
 
-poses, points_3d_est = bundle_adjustment(poses, frames, points_3d_est, K, last_n=frames_processing, 
-                                         distance_matcher=points_matcher_treshold, 
-                                         max_nfev=10)
+#poses, points_3d_est = bundle_adjustment(poses, frames, points_3d_est, K, last_n=frames_processing, 
+#                                         distance_matcher=points_matcher_treshold, 
+#                                         max_nfev=10)
 for i in range (15):
     frames_processing = 15
     try:
@@ -99,7 +96,7 @@ for i in range (15):
     #                                        max_nfev=10)
 plot_camera_poses(poses, ax=None, scale=0.1)
 plot_poses(poses, plane='xz')
-plot_point_cloud(points_3d_est.points)
+#plot_point_cloud(points_3d_est.points)
 #gt = [(pose.R) for pose in poses_gt]
 #print('ground truth', gt[-1])
 #est = [(pose.R) for pose in poses]

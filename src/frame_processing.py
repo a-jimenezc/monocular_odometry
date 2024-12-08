@@ -39,8 +39,7 @@ def compute_relative_pose(matched_frame1, matched_frame2, K, ransac_threshold): 
 
     retval, R, t, mask = cv2.recoverPose(E, 
                                          inlier_frame1.points, 
-                                         inlier_frame2.points, 
-                                         K)
+                                         inlier_frame2.points,K) 
     
     relative_pose = CamPose(R, t.reshape(-1)).cam_pose_inv()
 

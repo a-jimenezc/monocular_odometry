@@ -377,7 +377,7 @@ def frame_processing(poses, frames, points_3d_est, video_handler, poses_gt, fram
 
 # Test data
 points_3d = [
-    [3, -2, 10.00],
+    [0, 0, 10.00],
     [1, 4, 10.10],
     [-4, -1, 10.20],
     [5, -3, 10.30],
@@ -503,7 +503,6 @@ K = np.array([[1000, 0, 500], [0, 1000, 500], [0, 0, 1]]).astype(float)
 
 #frames = []
 #for pose in poses: frames.append(PointDescriptors(pose.project_into_cam(points_3d, K), descriptors_3d))
-
 frame0 = PointDescriptors(pose0.project_into_cam(points_3d[:25,:], K), descriptors_3d[:25,:])
 frame1 = PointDescriptors(pose1.project_into_cam(points_3d[5:25,:], K), descriptors_3d[5:25,:])
 frame2 = PointDescriptors(pose2.project_into_cam(points_3d[10:40,:], K), descriptors_3d[10:40,:])
@@ -571,6 +570,7 @@ for frame in video_handler:
         continue
     pose1_est = pose1_est.scaled_pose(poses_gt[1].t) # Scaling with ground truth
     points_3d_est = triangulate_points(pose0, pose1_est, inlier_frame0, inlier_frame1)
+    print(points_3d_est.points)
 
     poses.append(pose1_est)
     frames.append(frame)
@@ -599,13 +599,13 @@ for i in range (2):
 
 
 
-gt = [(pose.R) for pose in poses_gt]
+#gt = [(pose.R) for pose in poses_gt]
 #print('ground truth', gt[-1])
-est = [(pose.R) for pose in poses]
+#est = [(pose.R) for pose in poses]
 #print('estimated', len(est), est[-1])
 
-plot_poses(poses, plane='xz')
-plot_point_cloud(points_3d_est.points)
+#plot_poses(poses, plane='xz')
+#plot_point_cloud(points_3d_est.points)
 
 matched_points_3d_est, matched_points_3d = points_3d_est.points_matcher(
     PointDescriptors(points_3d, descriptors_3d), 1)
