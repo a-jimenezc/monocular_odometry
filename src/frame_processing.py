@@ -1,60 +1,8 @@
-import cv2
-import numpy as np
-from src.point_descriptors import PointDescriptors
-from src.cam_pose import CamPose
-
-
-def triangulate_points(pose1, pose2, matched_frame_1, matched_frame_2, K): #
-    P1 = pose1.projection_matrix(K)
-    P2 = pose2.projection_matrix(K)
-
-    points_homogeneous = cv2.triangulatePoints(P1, P2, matched_frame_1.points.T, matched_frame_2.points.T)
-    points_3d_estimated = points_homogeneous[:3] / points_homogeneous[3]
-
-    return PointDescriptors(points_3d_estimated.T, matched_frame_2.descriptors)
-
-def compute_relative_pose(matched_frame1, matched_frame2, K, ransac_threshold): #
-
-    if len(matched_frame1.points) < 8:
-        raise ValueError("Insufficient points for essential matrix computation (minimum 5 points required).")
-
-    F, inliers = cv2.findFundamentalMat(matched_frame1.points,
-                                        matched_frame2.points, 
-                                        cv2.FM_RANSAC, 
-                                        ransac_threshold)
-    
-    if F is None or inliers is None:
-        print("Fundamental matrix estimation failed.")
-        return None
-
-    # Compute pose
-    E = K.T @ F @ K
-
-    # use inliers to estimate the pose
-    inliers = inliers.ravel() > 0
-    inlier_frame1 = PointDescriptors(matched_frame1.points[inliers], 
-                                     matched_frame1.descriptors[inliers])
-    inlier_frame2 = PointDescriptors(matched_frame2.points[inliers], 
-                                     matched_frame2.descriptors[inliers])
-
-    retval, R, t, mask = cv2.recoverPose(E, 
-                                         inlier_frame1.points, 
-                                         inlier_frame2.points,K) 
-    
-    relative_pose = CamPose(R, t.reshape(-1)).cam_pose_inv()
-
-    return relative_pose, inlier_frame1, inlier_frame2
-
-def pnp(corresponding_3d, corresponding_2d, K): #
-    retval, rvec, tvec, inliers = cv2.solvePnPRansac(corresponding_3d.points, corresponding_2d.points, K, None)
-    R, _ = cv2.Rodrigues(rvec)
-    pose = CamPose(R, tvec.reshape(3,))
-    pose = pose.cam_pose_inv() # Camera pose with respect to origin. w_T_c
-
-    return pose
+from src.scale_recovery import estimate_scale
+from src.utility_functions import triangulate_points, compute_relative_pose, pnp
 
 def frame_processing(poses, frames, points_3d_est, video_handler, poses_gt, K, ransac_threshold, 
-                     points_matcher_treshold, frames_to_process=2):
+                     points_matcher_treshold, recover_scale=False, frames_to_process=2):
     '''
     Modifieas lists of poses, frames, and points_3d_est object
     '''
@@ -73,23 +21,27 @@ def frame_processing(poses, frames, points_3d_est, video_handler, poses_gt, K, r
             continue
 
         _, inlier_frame1, inlier_frame2 = compute_relative_pose(matched_frame1, matched_frame2, K, ransac_threshold=ransac_threshold)
-        #print('inlier_frame1.points.shape[0]', inlier_frame1.points.shape[0])
+
         if inlier_frame1.points.shape[0] < 5:
             print(f'Not enough inliers points at step {i}')
             continue
 
         corresponding_3d, corresponding_2d = points_3d_est.points_matcher(inlier_frame2, points_matcher_treshold)
-        #print('corresponding_2d.points.shape[0]', corresponding_2d.points.shape[0])
-        #print('points_3d_est.points.shape[0]', points_3d_est.points.shape[0])
+        
         if corresponding_2d.points.shape[0] < 5:
             print(f'Not enough corresponding points at step {i}')
             continue
 
         pose2_est = pnp(corresponding_3d, corresponding_2d, K)
 
-        pose2_est = pose2_est#.scaled_pose(poses_gt[i-1].t)
+        if recover_scale == True:
+            scale = estimate_scale(poses[-1], pose2_est, inlier_frame1, inlier_frame2, K, 
+                distance_threshold = 30,
+                ransac_n = 5,
+                num_iterations = 100)
+            pose2_est.t = pose2_est.t * scale
     
-        poses.append(pose2_est) # exact correspondence between poses an frames
+        poses.append(pose2_est)
         frames.append(frame)
 
         frames_processed = frames_processed + 1
