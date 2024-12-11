@@ -18,20 +18,23 @@ pip install -r requirements.txt
 python3 main.py
 
 ## Code Structure
-root/
-├── src/                      # Main source code
-│   ├── remote/               # flask server / robot general control
-│   ├── bundle_adjustment.py  # implemented bundle adjustment
-│   ├── client.py             # client for remote robot control
-│   ├── camera_calibration.py # 
-│   ├── visual_odometry.py    # visual odometry main process
-│   ├── frame_processing.py   # frame operations
-│   ├── scale_recovery.py     # scale recovery implementation
-│   ├── utility_functions.py  # pnp, triangulation, pose_estimation.
-│   ├── video_data_handler.py # iterative video/image access handle
-│   └── ...       
-├── tests/                    # Unit tests
-├── test_data/                # Videos for test and demo
-├── scripts/                  # Scripts for automation and tasks
-├── requirements.txt          # Python dependencies 
-└── README.md                 # Project overview
+
+The project is organized as follows:
+
+- **`src/`**: Main source code  
+  - **`remote/`**: Flask server and robot general control  
+  - **`bundle_adjustment.py`**: Bundle adjustment implementation  
+  - **`client.py`**: Client for remote robot control  
+  - **`camera_calibration.py`**: Camera calibration utilities  
+  - **`visual_odometry.py`**: Visual odometry main process  
+  - **`frame_processing.py`**: Frame processing operations  
+  - **`scale_recovery.py`**: Scale recovery implementation  
+  - **`utility_functions.py`**: Helper functions (e.g., PnP, triangulation, pose estimation)  
+  - **`video_data_handler.py`**: Video/image data handler for iterative access  
+  - **`...`**: Additional modules  
+
+- **`tests/`**: Unit tests  
+- **`test_data/`**: Test and demo video files  
+- **`scripts/`**: Automation and task scripts  
+- **`requirements.txt`**: Python dependencies  
+- **`README.md`**: Project overview and documentation  
