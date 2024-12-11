@@ -7,7 +7,6 @@ from src.cam_pose import CamPose
 def triangulate_points(pose1, pose2, matched_frame_1, matched_frame_2, K): #
     P1 = pose1.projection_matrix(K)
     P2 = pose2.projection_matrix(K)
-
     points_homogeneous = cv2.triangulatePoints(P1, P2, matched_frame_1.points.T, matched_frame_2.points.T)
     points_3d_estimated = points_homogeneous[:3] / points_homogeneous[3]
 

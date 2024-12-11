@@ -1,2 +1,4 @@
 # Python version: 3.10.15
+numpy==1.26.4
 opencv-python==4.10.0.84
+open3d==0.18.0

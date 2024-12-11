@@ -31,11 +31,11 @@ def estimate_scale(pose1, pose2_est, inlier_frame1, inlier_frame2, K,
                 num_iterations = 100):
     
     pcd = o3d.geometry.PointCloud()
-    #print('inlier_frame1',inlier_frame1.points.shape)
+    print('inlier_frame1',inlier_frame1.points.shape)
     region_frame1 = extract_region_points(inlier_frame1, K)
     region_frame2 = extract_region_points(inlier_frame2, K)
     #print('region_frame1.points',region_frame1.points.shape)
-    matched_frame0, matched_frame1 = region_frame1.points_matcher(region_frame2, distance_threshold)
+    matched_frame0, matched_frame1 = region_frame1.points_matcher(region_frame2, 100)
     #print('matched_frame0', matched_frame0.points)
     points_3d_est = triangulate_points(pose1, pose2_est, matched_frame0, matched_frame1,K)
     pcd.points = o3d.utility.Vector3dVector(points_3d_est.points)

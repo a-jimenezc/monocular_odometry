@@ -25,7 +25,5 @@ poses, points_3d_est = visual_odometry(video_handler, K, points_matcher_treshold
 # Plots
 plot_poses(poses, plane='xz')
 #plot_camera_poses(poses, ax=None, scale=0.1)
-
 #plot_point_cloud(points_3d_est.points)
-
 #visualize_sift_on_video(video_path, './output.mp4')

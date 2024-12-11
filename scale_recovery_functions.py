@@ -1,3 +1,4 @@
+'Scale recovery function implementation'
 from scipy.spatial.transform import Rotation as R
 import cv2
 import numpy as np
@@ -12,6 +13,7 @@ from src.plot_poses_plane import plot_poses, plot_camera_poses
 from src.plot_points import plot_point_cloud
 import open3d as o3d
 
+# Synthetic data
 points_3d = [
     [0, -1, 10.9],
     [1, -1, 11.10],
@@ -28,7 +30,6 @@ points_3d = [
     [-3, -5, 10.70],
     [4, -3, 10.80],
 ]
-
 
 descriptors_3d = [
     [1.87, 4.75, 3.66, 2.99, 0.78],
@@ -50,21 +51,25 @@ descriptors_3d = [
 points_3d = np.array(points_3d)
 descriptors_3d = np.array(descriptors_3d).astype(np.float32)
 
+# Initial two poses
 pose0 = CamPose(np.eye(3), np.array([0, 0, 0]))
 pose1 = CamPose(R.from_euler('x', 10, degrees=True).as_matrix(), np.array([0.5, 0, 1]))
 
 K = np.array([[1000, 0, 500], [0, 1000, 500], [0, 0, 1]]).astype(float)
 
-
+# Projectioins of pints
 frame0 = PointDescriptors(pose0.project_into_cam(points_3d, K), descriptors_3d)
 frame1 = PointDescriptors(pose1.project_into_cam(points_3d, K), descriptors_3d)
+
+# Emulating real images
 matched_frame0, matched_frame1 = frame0.points_matcher(frame1, 0.001)
 pose1_est, inlier_frame0, inlier_frame1 = compute_relative_pose(matched_frame0, 
                                                                 matched_frame1, K, ransac_threshold=0.01)
 
-print(matched_frame0.points)
-
 def extract_region_points(frame, K):
+    '''
+    Extracts points from the bottom middle part of the image
+    '''
 
     # Extract principal point (c_x, c_y) from K
     c_x = K[0, 2]
@@ -92,7 +97,7 @@ def estimate_scale(pose1, pose2_est, inlier_frame1, inlier_frame2, K,
 
     region_frame1 = extract_region_points(inlier_frame1, K)
     region_frame2 = extract_region_points(inlier_frame2, K)
-    print(region_frame2.points)
+    #print(region_frame2.points)
     matched_frame0, matched_frame1 = region_frame1.points_matcher(region_frame2, distance_threshold)
 
     points_3d_est = triangulate_points(pose1, pose2_est, matched_frame0, matched_frame1,K)
@@ -113,13 +118,12 @@ scale = estimate_scale(pose0, pose1_est, inlier_frame0, inlier_frame1, K,
                    distance_threshold = 1,
                    ransac_n = 5,
                    num_iterations = 100)
-#print(pose1.t, pose1_est.t*scale)
+
+
+print('Actual pose1: ', pose1.t)
+print('Estimated pose1', pose1_est.t*scale)
+
 #print(mean_y)
-#print(pose1.t, pose1_est.scaled_pose(pose1.t).t)
 #print(points_3d_est.points)
-
 #plot_point_cloud(points_3d_est.points)
-
-#pose1_est = pose1_est.scaled_pose(poses_gt[1].t) # Scaling with ground truth
-
 #plot_point_cloud(points_3d)
