@@ -6,7 +6,7 @@ from src.plot_points import plot_point_cloud
 from src.visualize_sift_on_video import visualize_sift_on_video
 
 # Mobile robot feed
-#video_path = 'test_data/vid21.mp4'
+#video_path = 'test_data/vid1.mp4'
 #K = np.array([[608.56811625, 0, 629.83269351],[0, 614.54502235, 346.79688358],[0, 0, 1]], dtype=np.float32)
 
 # Kitti dataset
